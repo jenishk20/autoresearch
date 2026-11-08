@@ -1,0 +1,30 @@
+# Control-plane settings. Env vars (from .env) override where noted.
+llm:
+  base_url: https://api.vultrinference.com/v1
+  model: glm-5.3                 # LLM_MODEL overrides this if Vultr actually serves that model
+  fallback_models: [glm-5.3, deepseek-v4.1-flash-1017, qwen3.8-27b, glm-5.3-flash]
+  timeout_s: 60
+  max_tokens: 2500
+
+nodes:                           # one entry per worker VM (node agent)
+  - name: local
+    url: http://127.0.0.1:8100   # NODE_URL overrides for the first node
+    token_env: NODE_TOKEN
+
+run:
+  cpus: 2
+  mem_gb: 3
+
+rl:
+  sps_estimate: 1500             # replace with scripts/bench.py; updated live from observed sps
+  seeds: 3
+  default_budget_minutes: 15
+  # (wave-1 segment steps, wave-2 steps), largest that fits the budget wins
+  ladder: [[150000, 300000], [100000, 200000], [50000, 100000], [25000, 50000], [10000, 20480]]
+  verify_seconds: 15             # per verify job (10 eval episodes)
+
+monitor:
+  interval_s: 5
+  llm_every_s: 120               # in wave 2, plus at rungs and on new flags
+  max_forks_per_tick: 2
+  fork_budget_frac: 0.15

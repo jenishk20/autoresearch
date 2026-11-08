@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Report {{ sid }}{% endblock %}
+{% block body %}
+<p><a href="/sessions/{{ sid }}">← back to the live session</a> · <a href="/api/sessions/{{ sid }}/report.json">report.json</a></p>
+<section class="report-head">
+  <div class="muted small">Query</div>
+  <div class="q-big">{{ r.query }}</div>
+  <h1 class="headline">{{ r.narrative.headline }}</h1>
+  <p>{{ r.narrative.summary }}</p>
+  <ul class="findings">{% for f in r.narrative.findings %}<li>{{ f }}</li>{% endfor %}</ul>
+  {% if r.narrative.caveats %}<p class="muted small">Caveats: {{ r.narrative.caveats | join(" · ") }}</p>{% endif %}
+  <p class="muted small">Narrative source: {{ r.narrative_source }}{% if r.narrative_source == "llm" %} (every number checked against report.json){% endif %} · {{ r.verification }}</p>
+</section>
+
+<section class="grid2">
+{% for env, t in r.per_env.items() %}
+  <div class="card">
+    <h3>{{ env }}{% if t.winner %} · winner <b>{{ t.winner }}</b>{% if t.tie %} <span class="tag">tie with {{ t.runner_up }}</span>{% endif %}{% endif %}</h3>
+    <table class="runs">
+      <thead><tr><th>Config</th><th>Seeds</th><th>IQM (held-out)</th><th>95% CI</th><th>Per-seed</th><th>Train return</th></tr></thead>
+      <tbody>{% for row in t.table %}
+        <tr{% if row.config == t.winner %} class="win"{% endif %}><td>{{ row.config }}</td><td>{{ row.n }}</td><td class="mono">{{ row.iqm }}</td>
+        <td class="mono">[{{ row.ci[0] }}, {{ row.ci[1] }}]</td><td class="mono small">{{ row.seed_scores | join(", ") }}</td><td class="mono">{{ row.train_return }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% if t.winner_minus_runner_up_ci %}<p class="small muted">Winner − runner-up, bootstrap 95% CI: [{{ t.winner_minus_runner_up_ci[0] }}, {{ t.winner_minus_runner_up_ci[1] }}]</p>{% endif %}
+  </div>
+{% endfor %}
+</section>
+
+<section class="grid2">
+  <div class="card">
+    <h3>Predictions (pre-registered)</h3>
+    <table class="runs"><thead><tr><th>ID</th><th>Statement</th><th>p</th><th>Outcome</th><th>Evidence</th></tr></thead>
+    <tbody>{% for p in r.predictions %}
+      <tr><td>{{ p.id }}</td><td>{{ p.statement }}</td><td class="mono">{{ p.p }}</td><td><span class="outcome o-{{ p.outcome }}">{{ p.outcome }}</span></td>
+      <td class="mono small">{% for k, v in p.evidence.items() %}{{ k }}={{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% endfor %}</tbody></table>
+    <p>Brier score: <b class="mono">{{ r.calibration.brier if r.calibration.brier is not none else "n/a" }}</b> over {{ r.calibration.n_decided }} decided predictions (always guessing 0.5 scores {{ r.calibration.baseline }}; lower is better).</p>
+  </div>
+  <div class="card">
+    <h3>Transfer and compute</h3>
+    <dl class="kv">
+      <dt>Winner on {{ r.transfer.from }}</dt><dd>{{ r.transfer.winner }}</dd>
+      {% for env, rank in r.transfer.rank_on.items() %}<dt>Its rank on {{ env }}</dt><dd>{{ rank if rank else "not run" }}</dd>{% endfor %}
+      <dt>Overall (Borda)</dt><dd>{{ r.overall_ranking | join(" > ") }}</dd>
+      <dt>Halving</dt><dd>{{ "{:,}".format(r.halving.steps_used) }} vs {{ "{:,}".format(r.halving.naive_steps) }} naive screening steps (saved {{ r.halving.saved_pct }}%)</dd>
+      <dt>Env steps</dt><dd>{{ "{:,}".format(r.compute.env_steps) }}</dd>
+      <dt>Compute</dt><dd>{{ r.compute.run_seconds }} run-seconds · {{ r.compute.vcpu_hours }} vCPU-hours</dd>
+      <dt>Sandbox</dt><dd>{{ "gVisor, no network" if r.compute.sandboxed else "local dev backend (NOT sandboxed)" }}</dd>
+      <dt>LLM</dt><dd>{{ r.llm.model }} · {{ r.llm.session_calls }} calls{% if not r.llm.enabled %} · off ({{ r.llm.reason }}){% endif %}</dd>
+    </dl>
+    {% if r.forks %}<h3 class="mt">Forks</h3>
+    <table class="runs"><thead><tr><th>Fork</th><th>Env</th><th>From step</th><th>Params</th><th>Verified</th><th>Parent verified</th></tr></thead><tbody>
+    {% for f in r.forks %}<tr><td>{{ f.config }}</td><td>{{ f.env }}</td><td class="mono">{{ "{:,}".format(f.from_step) }}</td><td class="mono small">{{ f.params }}</td><td class="mono">{{ f.verify }}</td><td class="mono">{{ f.parent_verify }}</td></tr>{% endfor %}
+    </tbody></table>{% endif %}
+    {% if r.eval_flags %}<h3 class="mt">Verification flags</h3><ul>{% for f in r.eval_flags %}<li class="mono small">{{ f.flag }} · {{ f.run_id }} · train {{ f.train }} vs verify {{ f.verify }}</li>{% endfor %}</ul>{% endif %}
+    {% if r.containment %}<h3 class="mt">Containment events</h3><ul>{% for c in r.containment %}<li class="mono small">{{ c.payload_json }}</li>{% endfor %}</ul>{% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <h3>Decision timeline</h3>
+  <ul class="feed">{% for d in r.decisions %}
+    <li class="dec"><span class="actor ac-{{ d.actor }}">{{ d.actor }}</span><b>{{ d.action | upper }}</b> {% if d.run_id %}<span class="mono small">{{ d.run_id }}</span>{% endif %}<div class="reason">{{ d.reason }}</div></li>
+  {% endfor %}</ul>
+</section>
+
+<section class="card">
+  <h3>Artifacts (wave-2 checkpoints)</h3>
+  <table class="runs"><thead><tr><th>Run</th><th>Checkpoint</th><th>SHA-256</th><th>Verified</th></tr></thead><tbody>
+  {% for a in r.artifacts %}<tr><td class="mono small">{{ a.run_id }}</td><td class="mono small">{{ a.checkpoint }}</td><td class="mono small sha">{{ a.sha256 }}</td><td class="mono">{{ a.verify_mean }}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

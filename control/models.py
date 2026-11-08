@@ -76,8 +76,18 @@ FORK_RULES: dict[str, dict[str, tuple]] = {
 HIDDEN_SIZES = {"64x64": [64, 64], "256x256": [256, 256]}
 
 
+MODEL_DEFAULTS: dict[str, dict[str, Any]] = {   # library defaults (CleanRL for PPO), not "first choice"
+    "logreg": {"C": 1.0, "class_weight": "none", "calibration": "none"},
+    "ridge": {"alpha": 1.0},
+    "random_forest": {"max_depth": 0, "min_samples_leaf": 1, "calibration": "none"},
+    "hgb": {"learning_rate": 0.1, "max_leaf_nodes": 31, "l2": 0.0, "calibration": "none"},
+    "mlp": {"hidden": "64x64", "lr": 1e-3, "weight_decay": 0.0, "dropout": 0.0, "calibration": "none"},
+    "ppo": {"hidden": "64x64", "learning_rate": 3e-4, "ent_coef": 0.0, "norm_obs": True},
+}
+
+
 def default_params(model: str) -> dict[str, Any]:
-    return {k: v[0] if k != "calibration" else "none" for k, v in PLANNER_CHOICES[model].items()}
+    return dict(MODEL_DEFAULTS[model])
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -142,6 +152,8 @@ class ResearchBrief(BaseModel):
     target: str | None = None  # None for RL
     metric: Metric
     costs: Costs | None = None
+    also_evaluate_on: list[str] = []  # RL: transfer envs; tabular: unused
+    budget_minutes: int | None = Field(default=None, ge=2, le=240)
     constraints: list[str] = []
     questions: conlist(str, min_length=1, max_length=4)
     feasible: bool = True
@@ -156,6 +168,10 @@ class ResearchBrief(BaseModel):
             raise ValueError("metric 'savings' requires costs")
         if self.problem_type != "rl" and not self.target:
             raise ValueError("tabular problems need a target column")
+        if self.problem_type == "rl":
+            bad = [e for e in [self.data_source.ref, *self.also_evaluate_on] if e not in RL_ENVS]
+            if bad:
+                raise ValueError(f"unknown env(s) {bad}; allowed: {list(RL_ENVS)}")
         return self
 
     @property
@@ -268,6 +284,8 @@ class Plan(BaseModel):
             raise ValueError(f"hypothesis_config {self.hypothesis_config!r} is not one of {names}")
         for p in self.predictions:
             for ref in (p.a, p.b):
+                if ref == "winner" and p.kind == "rank_transfer":
+                    continue  # "the winner on `dataset`"
                 if ref is not None and ref not in names:
                     raise ValueError(f"prediction {p.id} refers to unknown config {ref!r}")
         return self

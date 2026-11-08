@@ -249,7 +249,7 @@ Every 15 s (tabular) / 30 s (RL), `features.py` computes per run, in code:
 - `reaches_threshold`: confirmed if the lower CI bound passes the threshold; refuted if the upper bound doesn't; otherwise inconclusive.
 - `top_feature`: from permutation importance on the sealed test set, averaged over seeds.
 - `flag_count`: counted from the decisions/events log.
-- `rank_transfer`: rank of the named config in the second dataset/env.
+- `rank_transfer`: rank of the named config (or `"winner"`, the winner on `dataset`) in the second dataset/env.
 
 **Calibration of the agent:** Brier score over decided predictions, shown next to the 0.25 baseline.
 
@@ -315,7 +315,7 @@ For `task: "rl"`: `dataset` = env id, `params` = the PPO params from the RL spec
 ```
 
 ### 10.3 Agent outputs
-- `ResearchBrief {problem_type, data_source{kind, ref}, target, metric, costs?, constraints[], questions[2–4], feasible, scope_note?}`
+- `ResearchBrief {problem_type, data_source{kind, ref}, target, metric, costs?, also_evaluate_on[] (RL transfer envs), budget_minutes?, constraints[], questions[1–4], feasible, scope_note?}`
 - `DataProfile {n_rows, n_cols, columns[{name, dtype, missing_frac, cardinality, single_feature_auc?}], target_stats{}, leakage_suspects[{column, reason}], id_like[], time_column?}`
 - `Plan {round, task_summary, drop_columns[{column, reason}], configs[2–8 ConfigSpec{name, model, params{}, preprocessing{}, answers_question, rationale}], hypothesis_config, predictions[3–5], feature_code?}`
 - `Prediction {id, statement, kind ∈ {a_beats_b, reaches_threshold, top_feature, flag_count, rank_transfer}, dataset, a, b?, min_ratio?, threshold?, feature?, flag?, min_count?, at_budget, p ∈ [0.05, 0.95]}`

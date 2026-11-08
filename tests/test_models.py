@@ -104,7 +104,7 @@ def _plan(**over):
 
 def test_plan_ok():
     plan = Plan.model_validate(_plan())
-    assert plan.configs[1].resolved_params()["max_leaf_nodes"] == 15
+    assert plan.configs[1].resolved_params()["max_leaf_nodes"] == 31
 
 
 def test_plan_rejects_param_outside_space():

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="hero">
+  <h1>Ask a research question</h1>
+  <p class="sub">The agent writes a plan with pre-registered predictions, trains every candidate in its own sandbox, intervenes while runs are live, re-checks the winners on held-out seeds, and writes a report where every number is computed by code.</p>
+  <form method="post" action="/sessions" class="ask">
+    <textarea name="query" id="query" rows="3" required>Find a good PPO setup for Hopper and check whether it transfers to Walker2d. 15-minute budget.</textarea>
+    <div class="row">
+      <div class="chips">
+        <button type="button" class="chip" data-q="Find a good PPO setup for Hopper and check whether it transfers to Walker2d. 15-minute budget.">PPO: Hopper → Walker2d</button>
+        <button type="button" class="chip" data-q="Quick check: which PPO settings matter most on Hopper? 5-minute budget.">Quick: Hopper, 5 min</button>
+        <button type="button" class="chip" data-q="Here's our customer CSV. A retention offer costs $50, a lost customer costs $600, and the offer keeps about 30% of customers who would otherwise leave. Who should we target?">Churn (not wired yet)</button>
+      </div>
+      <button class="primary" type="submit">Start research</button>
+    </div>
+  </form>
+</section>
+
+<section>
+  <h2>Sessions</h2>
+  {% if sessions %}
+  <table class="list">
+    <thead><tr><th>Started</th><th>Query</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sessions %}
+      <tr>
+        <td class="mono">{{ s.created }}</td>
+        <td class="q"><a href="/sessions/{{ s.id }}">{{ s.prompt }}</a></td>
+        <td><span class="status s-{{ s.status }}">{{ s.phase or s.status }}</span></td>
+        <td>{% if s.has_report %}<a href="/sessions/{{ s.id }}/report">report →</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No sessions yet.</p>{% endif %}
+</section>
+<script>
+document.querySelectorAll('.chip').forEach(b => b.onclick = () => { document.getElementById('query').value = b.dataset.q; });
+</script>
+{% endblock %}

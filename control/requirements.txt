@@ -1,0 +1,13 @@
+# Control plane (runs on the control VM, never inside the sandbox)
+fastapi
+uvicorn[standard]
+sse-starlette
+jinja2
+python-multipart
+httpx
+openai
+python-dotenv
+pyyaml
+scipy
+numpy<2
+pydantic>=2

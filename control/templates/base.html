@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Autoresearch{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><span class="logo">◆</span> Autoresearch</a>
+  <div class="pills">
+    {% if status.sandboxed %}
+      <span class="pill ok" title="Every job runs in a gVisor sandbox with no network">Sandbox: gVisor</span>
+    {% else %}
+      <span class="pill warn" title="Local dev backend: plain subprocesses, no isolation. Red-team presets are disabled.">Sandbox: OFF (local dev)</span>
+    {% endif %}
+    {% if status.llm.enabled %}
+      <span class="pill ok" title="Vultr Serverless Inference">LLM: {{ status.llm.model }}</span>
+    {% else %}
+      <span class="pill warn" title="{{ status.llm.reason }}">LLM: off, rule-based fallbacks</span>
+    {% endif %}
+    <span class="pill" title="Concurrent run slots across nodes · measured env steps/sec per run">{{ status.slots }} slots · {{ status.sps_estimate }} sps</span>
+  </div>
+</header>
+<main>{% block body %}{% endblock %}</main>
+</body>
+</html>
