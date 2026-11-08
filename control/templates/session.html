@@ -1,52 +1,34 @@
 {% extends "base.html" %}
-{% block title %}Session {{ sid }}{% endblock %}
+{% block title %}Study · Autoresearch{% endblock %}
 {% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>{% endblock %}
 {% block body %}
-<section class="session-head">
-  <div class="q-big">{{ prompt }}</div>
-  <div class="meta"><span id="status" class="status">…</span> <span id="elapsed" class="muted mono"></span>
-    <a id="report-link" class="primary small hidden" href="/sessions/{{ sid }}/report">Open report →</a>
-    <button id="cancel" class="ghost small hidden">Cancel</button></div>
-  <ol class="stepper" id="stepper">
-    <li data-p="understand">Understand</li><li data-p="plan">Plan</li><li data-p="provision">Worker VM</li><li data-p="wave1">Wave 1 · screen</li>
-    <li data-p="wave1-seg2">Wave 1 · halving</li><li data-p="wave2">Wave 2 · confirm</li>
-    <li data-p="verify">Verify</li><li data-p="report">Report</li>
-  </ol>
-  <div id="phase-detail" class="muted"></div>
-  <div id="worker" class="worker small hidden"></div>
-</section>
-
-<section class="grid3">
-  <div class="card"><h3>Brief</h3><div id="brief" class="muted">Waiting for the agent…</div></div>
-  <div class="card"><h3>Plan</h3><div id="plan" class="muted">—</div></div>
-  <div class="card"><h3>Pre-registered predictions</h3><div id="preds" class="muted">—</div></div>
-</section>
-
-<section>
-  <h2>Live learning curves <span class="muted small">mean true return of the last 10 episodes · dashed = fork</span></h2>
-  <div id="charts" class="charts"></div>
-</section>
-
-<section class="grid2">
-  <div class="card">
-    <h3>Agent decisions</h3>
-    <ul id="decisions" class="feed"></ul>
+<section class="study-head">
+  <h1>{{ prompt }}</h1>
+  <div class="study-bar">
+    <span id="live" class="dot live"></span><span id="now" class="now">Starting</span>
+    <span id="elapsed" class="muted small mono"></span>
+    <span class="spacer"></span>
+    <button id="cancel" class="btn ghost sm hidden">Stop</button>
+    <a id="report-link" class="btn sm hidden" href="/sessions/{{ sid }}/report">Results</a>
   </div>
-  <div class="card">
-    <h3>Containment</h3>
-    <div id="contain-note" class="muted small"></div>
-    <div id="redteam" class="chips"></div>
-    <ul id="contain" class="feed"></ul>
-    <h3 class="mt">Flags</h3>
-    <ul id="flags" class="feed small"></ul>
-  </div>
+  <div class="progress"><span id="progress" style="width:2%"></span></div>
 </section>
 
-<section>
-  <h2>Runs</h2>
-  <table class="runs"><thead><tr><th>Config</th><th>Env</th><th>Seed</th><th>Wave</th><th>Status</th><th>Progress</th><th>Return</th><th>Verified</th><th>Flags</th></tr></thead>
-  <tbody id="runs"></tbody></table>
-</section>
+<section id="winner" class="card winner-banner hidden"></section>
+<section id="agents" class="agents"></section>
+
+<div class="foot">
+  <span id="sandbox"></span>
+  <span class="spacer"></span>
+  <span class="attacks" id="redteam"></span>
+</div>
+<ul id="contain" class="blocked"></ul>
+
+<details><summary>Agent log</summary><ul id="feed" class="log"></ul></details>
+<details><summary>Plan</summary><div id="plan" class="small muted" style="padding:8px 0"></div></details>
+<details><summary>All runs (<span id="nruns">0</span>)</summary>
+  <table><thead><tr><th>Agent</th><th>Robot</th><th>Seed</th><th>Status</th><th>Progress</th><th>Score</th></tr></thead><tbody id="runs"></tbody></table>
+</details>
 <script>window.SID = "{{ sid }}";</script>
-<script src="/static/session.js"></script>
+<script src="/static/session.js?v=8"></script>
 {% endblock %}

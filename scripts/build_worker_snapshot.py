@@ -43,7 +43,7 @@ def main():
                 break
             time.sleep(5)
         subprocess.run(["rsync", "-az", "--delete", "-e", f"ssh -i {KEY} -o UserKnownHostsFile={KNOWN}",
-                        "--exclude", ".venv", "--exclude", "runs", "--exclude", ".git", "--exclude", ".env",
+                        "--exclude", ".venv", "--exclude", ".venv-node", "--exclude", "runs", "--exclude", ".git", "--exclude", ".env",
                         "--exclude", "__pycache__", f"{ROOT}/", f"root@{ip}:/opt/autoresearch/"], check=True)
         ssh(ip, "bash /opt/autoresearch/infra/setup_worker.sh")
         ssh(ip, "bash /opt/autoresearch/infra/smoke_test.sh")

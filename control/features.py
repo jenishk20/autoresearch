@@ -31,6 +31,8 @@ class RunState:
     last_step: int = 0
     updates: list = field(default_factory=list)    # dicts
     episodes: list = field(default_factory=list)   # (step, ret_true, len)
+    successes: list = field(default_factory=list)  # 1.0 / 0.0 per finished episode (goal tasks only)
+    videos: list = field(default_factory=list)     # checkpoint rollout videos
     ckpts: list = field(default_factory=list)      # (step, path, sha)
     done_reason: str | None = None
     exit_code: int | None = None
@@ -52,8 +54,13 @@ class RunState:
             return None
         return float(np.mean([e[1] for e in self.episodes[-10:]]))
 
-    def add_episode(self, step, ret, ln):
+    def success_recent(self) -> float | None:
+        return float(np.mean(self.successes[-20:])) if self.successes else None
+
+    def add_episode(self, step, ret, ln, success=None):
         self.episodes.append((step, ret, ln))
+        if success is not None:
+            self.successes.append(float(success))
         if len(self.episodes) >= 3:
             self.best10 = max(self.best10, float(np.mean([e[1] for e in self.episodes[-10:]])))
 

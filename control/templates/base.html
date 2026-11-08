@@ -4,28 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Autoresearch{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=7">
 {% block head %}{% endblock %}
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="/"><span class="logo">◆</span> Autoresearch</a>
-  <div class="pills">
-    {% if status.worker_mode == "vultr" %}
-      <span class="pill ok" title="Every job runs in gVisor with no network on a Vultr VM ({{ status.worker.plan }}, {{ status.worker.region }}). Worker: {{ status.worker.status }}. Shared VM is destroyed at {{ status.worker.keep_until }}.">Sandbox: gVisor on Vultr · {{ status.worker.status }}</span>
-    {% elif status.sandboxed %}
-      <span class="pill ok" title="Every job runs in a gVisor sandbox with no network">Sandbox: gVisor</span>
-    {% else %}
-      <span class="pill warn" title="Local dev backend: plain subprocesses, no isolation. Red-team presets are disabled.">Sandbox: OFF (local dev)</span>
-    {% endif %}
-    {% if status.llm.enabled %}
-      <span class="pill ok" title="Vultr Serverless Inference">LLM: {{ status.llm.model }}</span>
-    {% else %}
-      <span class="pill warn" title="{{ status.llm.reason }}">LLM: off, rule-based fallbacks</span>
-    {% endif %}
-    <span class="pill" title="Concurrent run slots across nodes · measured env steps/sec per run">{{ status.slots }} slots · {{ status.sps_estimate }} sps</span>
+<header class="top"><div class="top-inner">
+  <a class="brand" href="/"><span class="mark"></span>Autoresearch</a>
+  {% set ready = status.sandboxed and (status.worker_mode != "vultr" or (status.worker.status or "").startswith("ready")) %}
+  <div class="status">
+    <span title="{{ status.worker.status if status.worker_mode == 'vultr' else '' }}"><span class="dot {{ 'ok' if ready else 'warn' }}"></span>{{ "Sandboxed" if status.sandboxed else "Dev mode" }}</span>
+    <span title="{{ status.llm.model }}"><span class="dot {{ 'ok' if status.llm.enabled else 'warn' }}"></span>AI</span>
   </div>
-</header>
+</div></header>
 <main>{% block body %}{% endblock %}</main>
 </body>
 </html>

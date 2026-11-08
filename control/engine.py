@@ -13,6 +13,9 @@ from control.features import RunState
 from control.llm import LLM
 from control.models import RunConfig, TERMINAL_STATUSES
 from control.nodes import make_nodes
+from control.settings import ROOT
+
+MEDIA = ROOT / "runs" / "media"
 
 # Log lines that mean "a sandbox limit stopped this" rather than "the code crashed".
 CONTAINMENT_SIGNATURES = [
@@ -120,7 +123,10 @@ class Engine:
                 "start_at": rs.start_at, "total": rs.total, "kind": rs.kind, "parent": rs.parent,
                 "is_fork": rs.is_fork, "ret_recent": None if rs.ret_recent() is None else round(rs.ret_recent(), 1),
                 "flags": sorted(rs.flags), "note": rs.note, "node": rs.node,
-                "eval_mean": None if not rs.eval else round(rs.eval["mean_return"], 1)}
+                "eval_mean": None if not rs.eval else round(rs.eval["mean_return"], 1),
+                "video_url": (rs.eval or {}).get("video_url"), "videos": rs.videos, "params": rs.params,
+                "success": None if rs.success_recent() is None else round(rs.success_recent(), 3),
+                "eval_success": (rs.eval or {}).get("success_rate")}
 
     def _save_run(self, rs: RunState):
         with self.db_lock:
@@ -158,6 +164,8 @@ class Engine:
                "budget": {"unit": "env_steps", "total": rs.total, "start_at": rs.start_at,
                           "anneal_total": rs.anneal_total},
                "resume_from": rs.resume_from, "ckpt_every": max(2048, (rs.total - rs.start_at) // 4)}
+        if rs.kind != "verify" and self.cfg["rl"].get("video_every"):
+            cfg["video_every"] = int(self.cfg["rl"]["video_every"])
         if rs.code_files:
             cfg["feature_fn"] = next(iter(rs.code_files))
         RunConfig.model_validate(cfg)  # the contract, checked before anything leaves the control plane
@@ -247,7 +255,16 @@ class Engine:
                 if d.get("val_metric") is not None:
                     points.append([d["step"], d["val_metric"]])
             elif t == "episode":
-                rs.add_episode(d["step"], d["ret_true"], d["len"])
+                rs.add_episode(d["step"], d["ret_true"], d["len"], d.get("success"))
+            elif t == "video":
+                vid = await node.file(rs.id, d["path"])
+                if vid:
+                    MEDIA.mkdir(parents=True, exist_ok=True)
+                    name = f"{rs.id}-{d['step']}.mp4"
+                    (MEDIA / name).write_bytes(vid)
+                    v = {"step": d["step"], "url": f"/media/{name}", "ret": d.get("ret_true"), "success": d.get("success")}
+                    rs.videos.append(v)
+                    self._publish(rs.session_id, {"type": "video", "run_id": rs.id, "video": v, "run": self.run_view(rs)})
             elif t == "checkpoint":
                 rs.ckpts.append((d["step"], d["path"], d["sha256"]))
                 with self.db_lock:
@@ -277,6 +294,12 @@ class Engine:
             raw = await node.file(rs.id, "eval.json")
             if rs.exit_code == 0 and raw:
                 rs.eval = json.loads(raw)
+                if rs.eval.get("video"):
+                    vid = await node.file(rs.id, rs.eval["video"]["path"])
+                    if vid:
+                        MEDIA.mkdir(parents=True, exist_ok=True)
+                        (MEDIA / f"{rs.parent}.mp4").write_bytes(vid)
+                        rs.eval["video_url"] = f"/media/{rs.parent}.mp4"
                 self._finish(rs, "DONE")
             else:
                 self._finish(rs, "FAILED", _last_line(logs))

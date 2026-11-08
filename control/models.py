@@ -27,7 +27,8 @@ METRICS_FOR_PROBLEM: dict[str, set[str]] = {
     "regression": {"rmse", "mae"},
     "rl": {"return"},
 }
-RL_ENVS = ("HalfCheetah-v4", "Walker2d-v4", "Hopper-v4", "InvertedDoublePendulum-v4")
+RL_ENVS = ("HalfCheetah-v4", "Walker2d-v4", "Hopper-v4", "InvertedDoublePendulum-v4",
+           "PandaReachDense-v3", "PandaPushDense-v3")   # Panda: Franka arm tasks (panda-gym, PyBullet)
 
 
 def improvement_ratio(metric: str, a: float, b: float) -> float | None:
@@ -380,6 +381,7 @@ class RunConfig(BaseModel):
     budget: Budget
     resume_from: str | None = None  # path under /parent
     feature_fn: str | None = None   # filename under /job (features.py or reward.py)
+    video_every: int | None = Field(default=None, ge=1000)  # RL: record a rollout video every N steps
     ckpt_every: int = 1             # in chunks (tabular) or 100k steps (rl)
 
     @model_validator(mode="after")
@@ -419,6 +421,14 @@ class EpisodeLine(BaseModel):
     len: int
 
 
+class VideoLine(BaseModel):
+    type: Literal["video"]
+    step: int
+    path: str
+    ret_true: float
+    success: float | None = None
+
+
 class CheckpointLine(BaseModel):
     type: Literal["checkpoint"]
     step: int
@@ -432,7 +442,7 @@ class DoneLine(BaseModel):
     reason: Literal["budget", "stop_flag", "nan", "error"]
 
 
-MetricLine = Union[UpdateLine, EpisodeLine, CheckpointLine, DoneLine]
+MetricLine = Union[UpdateLine, EpisodeLine, VideoLine, CheckpointLine, DoneLine]
 
 
 # ================================================================ run state machine

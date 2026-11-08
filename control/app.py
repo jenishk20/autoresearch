@@ -35,6 +35,8 @@ async def lifespan(_app):
 
 app = FastAPI(title="Autoresearch", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
+(ROOT / "runs" / "media").mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=ROOT / "runs" / "media"), name="media")
 templates = Jinja2Templates(directory=HERE / "templates")
 
 

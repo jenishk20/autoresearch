@@ -48,6 +48,8 @@ class TrueReturn(gym.Wrapper):
         self._len += 1
         if term or trunc:
             info["true_return"], info["true_len"] = self._ret, self._len
+            if "is_success" in info:   # goal-reaching tasks (Panda): did the robot finish the task?
+                info["true_success"] = float(info["is_success"])
         return obs, r, term, trunc, info
 
 
@@ -68,9 +70,80 @@ class ShapedReward(gym.Wrapper):
         return obs, shaped, term, trunc, info
 
 
+PANDA_CAMERA = dict(render_width=480, render_height=360, render_target_position=[0.0, 0.0, 0.05],
+                    render_distance=1.1, render_yaw=60, render_pitch=-35)   # table, cube and target all in frame
+
+
+def base_env(env_id, render=False):
+    """Plain env. Panda tasks (panda-gym, PyBullet) have dict observations -> flattened to one vector."""
+    if env_id.startswith("Panda"):
+        import panda_gym  # noqa: F401  (registers the Panda envs)
+        kw = dict(render_mode="rgb_array", **PANDA_CAMERA) if render else {}
+        return gym.wrappers.FlattenObservation(gym.make(env_id, **kw))
+    return gym.make(env_id, render_mode="rgb_array") if render else gym.make(env_id)
+
+
+def can_render(env_id) -> bool:
+    if env_id.startswith("Panda"):
+        return True   # PyBullet's CPU renderer needs no OpenGL
+    return os.environ.get("MUJOCO_GL", "") not in ("", "disable", "disabled", "off", "0")
+
+
+_RENDER_ENVS = {}
+
+
+def _caption(frame, text, ok):
+    """Burn a small status label into the frame (top-left)."""
+    try:
+        from PIL import Image, ImageDraw
+        im = Image.fromarray(frame); d = ImageDraw.Draw(im)
+        w = 8 + 7 * len(text)
+        d.rectangle([8, 8, 8 + w, 30], fill=(20, 20, 19) if ok is None else ((60, 120, 60) if ok else (150, 60, 50)))
+        d.text((14, 12), text, fill=(255, 255, 255))
+        return np.asarray(im)
+    except Exception:
+        return frame
+
+
+def record_rollout(agent, env_id, seed, path, episodes=None) -> tuple[float, float | None]:
+    """Deterministic rollouts with the current policy, saved as one mp4 (Panda: 2 attempts, slowed down,
+    each labelled with its outcome). Returns (mean true return, success rate or None)."""
+    import imageio
+    env = _RENDER_ENVS.get(env_id) or _RENDER_ENVS.setdefault(env_id, base_env(env_id, render=True))
+    panda = env_id.startswith("Panda")
+    episodes = episodes or (2 if panda else 1)
+    fps = env.metadata.get("render_fps") or 25
+    k = 1 if panda else max(1, round(fps / 30))
+    out_fps = 12 if panda else min(30, fps / k)        # Panda episodes are 2 s at real speed; slow them down
+    lo, hi = env.action_space.low, env.action_space.high
+    frames, rets, succ = [], [], []
+    for ep in range(episodes):
+        o, _ = env.reset(seed=seed + ep)
+        ep_frames, ret, done, n, info = [env.render()], 0.0, False, 0, {}
+        while not done:
+            a = agent.act_deterministic(torch.tensor(o, dtype=torch.float32).unsqueeze(0))[0].numpy()
+            o, r, term, trunc, info = env.step(np.clip(a, lo, hi))
+            ret += float(r); n += 1; done = term or trunc
+            if n % k == 0:
+                ep_frames.append(env.render())
+        ok = float(info["is_success"]) if "is_success" in info else None
+        rets.append(ret)
+        if ok is not None:
+            succ.append(ok)
+        if panda:
+            label = f"attempt {ep + 1}"
+            ep_frames = [_caption(f, label, None) for f in ep_frames]
+            end = _caption(ep_frames[-1], f"attempt {ep + 1}: {'success' if ok else 'missed'}", bool(ok))
+            ep_frames += [end] * int(out_fps * 1.2)      # hold the outcome for ~1 s
+        frames += ep_frames
+    path.parent.mkdir(parents=True, exist_ok=True)
+    imageio.mimsave(path, frames, fps=out_fps, macro_block_size=8)
+    return float(np.mean(rets)), (float(np.mean(succ)) if succ else None)
+
+
 def make_env(env_id, gamma, reward_fn=None):
     def thunk():
-        env = gym.make(env_id)
+        env = base_env(env_id)
         env = TrueReturn(env)
         if reward_fn is not None:
             env = ShapedReward(env, reward_fn)
@@ -189,7 +262,17 @@ def train(cfg) -> int:
     next_obs_raw, _ = envs.reset(seed=seed + global_step)
     next_obs_raw = torch.tensor(next_obs_raw, dtype=torch.float32)
     next_done = torch.zeros(num_envs)
-    recent_true, recent_len = [], []
+    recent_true, recent_len, recent_succ = [], [], []
+    video_every = int(getattr(cfg, "video_every", 0) or 0) if can_render(env_id) else 0
+    next_video = (global_step // video_every + 1) * video_every if video_every else None
+
+    def checkpoint_video(step):
+        try:
+            rel = f"videos/step_{step:09d}.mp4"
+            ret, succ = record_rollout(agent, env_id, 10_000, OUT / rel)
+            writer.write("video", step=step, path=rel, ret_true=round(ret, 2), success=succ)
+        except Exception as e:  # videos are optional; never kill training over them
+            print(f"video skipped: {e}", file=sys.stderr)
     t_start, steps_start = time.time(), global_step
 
     for iteration in range(1, num_iterations + 1):
@@ -226,8 +309,11 @@ def train(cfg) -> int:
                         ln = int(info.get("true_len", info["episode"]["l"]))
                         recent_true = (recent_true + [rt])[-10:]
                         recent_len = (recent_len + [ln])[-10:]
+                        succ = info.get("true_success")
+                        if succ is not None:
+                            recent_succ = (recent_succ + [succ])[-20:]
                         writer.write("episode", step=global_step, ret_true=round(rt, 3),
-                                     ret_shaped=round(float(info["episode"]["r"]), 3), len=ln)
+                                     ret_shaped=round(float(info["episode"]["r"]), 3), len=ln, success=succ)
 
         # bootstrap value (GAE)
         with torch.no_grad():
@@ -293,13 +379,19 @@ def train(cfg) -> int:
                             "clipfrac": round(float(np.mean(clipfracs)), 4), "ev": round(ev, 4) if math.isfinite(ev) else 0.0,
                             "lr": optimizer.param_groups[0]["lr"], "entropy": round(entropy_loss.item(), 4),
                             "pg_loss": round(pg_loss.item(), 5), "v_loss": round(v_loss.item(), 5),
-                            "ep_len": round(float(np.mean(recent_len)), 1) if recent_len else 0.0})
+                            "ep_len": round(float(np.mean(recent_len)), 1) if recent_len else 0.0,
+                            **({"success": round(float(np.mean(recent_succ)), 3)} if recent_succ else {})})
 
         if global_step >= next_ckpt and global_step < total:   # change 8 (final one saved below)
             save_ckpt(writer, agent, optimizer, global_step, p, env_id)
             next_ckpt += ckpt_every
+        if next_video is not None and global_step >= next_video and global_step < total:
+            checkpoint_video(global_step)
+            next_video += video_every
 
     save_ckpt(writer, agent, optimizer, global_step, p, env_id)
+    if video_every:
+        checkpoint_video(global_step)
     writer.write("done", step=global_step, reason="budget")
     envs.close()
     return 0
@@ -311,7 +403,7 @@ def evaluate(cfg, episodes=10, seed0=10_000) -> dict:
     torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "2")))
     ck = torch.load(PARENT / os.path.basename(cfg.resume_from), map_location="cpu", weights_only=False)
     p = ck["params"]
-    env = gym.make(cfg.dataset)
+    env = base_env(cfg.dataset)
     obs_dim = int(np.prod(env.observation_space.shape))
     act_dim = int(np.prod(env.action_space.shape))
     agent = Agent(obs_dim, act_dim, tuple(p["hidden"]), p["norm_obs"])
@@ -319,35 +411,28 @@ def evaluate(cfg, episodes=10, seed0=10_000) -> dict:
     agent.eval()
     lo, hi = env.action_space.low, env.action_space.high
 
-    def run_episode(e, s, frames=None, k=1):
+    def run_episode(e, s):
         o, _ = e.reset(seed=s)
-        ret, n, done = 0.0, 0, False
+        ret, n, done, info = 0.0, 0, False, {}
         while not done:
             a = agent.act_deterministic(torch.tensor(o, dtype=torch.float32).unsqueeze(0))[0].numpy()
-            o, r, term, trunc, _ = e.step(np.clip(a, lo, hi))
+            o, r, term, trunc, info = e.step(np.clip(a, lo, hi))
             ret += float(r); n += 1; done = term or trunc
-            if frames is not None and n % k == 0:
-                frames.append(e.render())
-        return ret, n
+        return ret, n, (float(info["is_success"]) if "is_success" in info else None)
 
-    rets, lens = [], []
+    rets, lens, succ = [], [], []
     for i in range(episodes):
-        r, n = run_episode(env, seed0 + i)
+        r, n, sc = run_episode(env, seed0 + i)
         rets.append(round(r, 3)); lens.append(n)
+        if sc is not None:
+            succ.append(sc)
     out = {"env_id": cfg.dataset, "seeds": [seed0 + i for i in range(episodes)], "returns": rets,
-           "lengths": lens, "mean_return": float(np.mean(rets)), "video": None}
-
-    gl = os.environ.get("MUJOCO_GL", "")
-    if gl and gl not in ("disable", "disabled", "off", "0"):
+           "lengths": lens, "mean_return": float(np.mean(rets)), "video": None,
+           "success_rate": float(np.mean(succ)) if succ else None}
+    if can_render(cfg.dataset):
         try:
-            import imageio
             med = int(np.argsort(rets)[len(rets) // 2])   # median seed, not the best one
-            renv = gym.make(cfg.dataset, render_mode="rgb_array")
-            fps = renv.metadata.get("render_fps", 30)
-            k = max(1, round(fps / 30))
-            frames = []
-            run_episode(renv, seed0 + med, frames, k)
-            imageio.mimsave(OUT / "video.mp4", frames, fps=fps / k)
+            record_rollout(agent, cfg.dataset, seed0 + med, OUT / "video.mp4")
             out["video"] = {"path": "video.mp4", "seed": seed0 + med, "note": "median seed"}
         except Exception as e:  # rendering is optional
             print(f"video skipped: {e}", file=sys.stderr)

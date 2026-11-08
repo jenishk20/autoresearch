@@ -15,7 +15,8 @@ from control.monitor import ask_monitor, ask_rescue, fork_overrides, rule_decisi
 from control.planner import plan_rl, size_budget, wave2_configs
 from control.understand import understand
 
-ENV_SHORT = {"HalfCheetah-v4": "hc", "Walker2d-v4": "w2d", "Hopper-v4": "hop", "InvertedDoublePendulum-v4": "idp"}
+ENV_SHORT = {"HalfCheetah-v4": "hc", "Walker2d-v4": "w2d", "Hopper-v4": "hop", "InvertedDoublePendulum-v4": "idp",
+             "PandaReachDense-v3": "reach", "PandaPushDense-v3": "push"}
 
 
 class SessionRunner:
@@ -103,13 +104,18 @@ class SessionRunner:
 
     async def run_rl(self):
         b = self.brief
-        envs = [b.data_source.ref, *[x for x in b.also_evaluate_on if x != b.data_source.ref]][:3]
+        excl = set(self.e.cfg["rl"].get("excluded_envs", []))
+        envs = [e for e in [b.data_source.ref, *b.also_evaluate_on] if e not in excl]
+        envs = list(dict.fromkeys(envs))[:3] or ["PandaPushDense-v3"]
+        if self.e.cfg["rl"].get("profile") == "test":
+            envs = envs[:1]   # quick runs: one task
         primary = envs[0]
-        minutes = b.budget_minutes or self.e.cfg["rl"]["default_budget_minutes"]
+        minutes = min(b.budget_minutes or self.e.cfg["rl"]["default_budget_minutes"], self.e.cfg["rl"].get("max_budget_minutes", 10))
         sps, slots = self.e.sps_estimate(), self.e.total_slots
 
         self.set_phase("plan", "choosing configs and pre-registering predictions")
-        max_cfg = self.e.cfg["rl"].get("max_configs", 3)
+        max_cfg = (self.e.cfg["rl"].get("test_agents", 2) if self.e.cfg["rl"].get("profile") == "test"
+                   else self.e.cfg["rl"].get("max_configs", 3))
         self.plan, actor = await asyncio.to_thread(plan_rl, self.e.llm, self.id, b,
                                                    {"slots": slots, "sps_per_run": round(sps), "minutes": minutes}, max_cfg)
         from control.planner import trim_plan
@@ -138,59 +144,66 @@ class SessionRunner:
             self.set_phase("provision", "waiting for the gVisor worker VM")
             await self.vm_task
 
-        # ---------------- wave 1, segment 1
-        self.set_phase("wave1", f"screening {len(cfgs)} configs on {primary}, {B1:,} steps each")
-        seg1 = [self._mk(1, 1, primary, n, p, 1, 0, B1, 2 * B1) for n, p in cfgs.items()]
-        await self.run_wave(seg1, wave=1)
+        prof = self.e.cfg["rl"].get("profile", "full")
+        if prof == "test":   # quick iteration: N agents side by side, one run each, no screening
+            w2cfgs = list(cfgs)[: self.e.cfg["rl"].get("test_agents", 2)]
+            seeds, B2 = 1, int(self.e.cfg["rl"].get("test_steps", 50000))
+            self.budget.update({"b1": 0, "b2": B2, "seeds": 1, "profile": "test"})
+            self.e.decision(self.id, "code", None, "select", f"test run: {len(w2cfgs)} agents x {B2:,} steps")
+        else:
+            # ---------------- wave 1, segment 1
+            self.set_phase("wave1", f"screening {len(cfgs)} configs on {primary}, {B1:,} steps each")
+            seg1 = [self._mk(1, 1, primary, n, p, 1, 0, B1, 2 * B1) for n, p in cfgs.items()]
+            await self.run_wave(seg1, wave=1)
 
-        # ---------------- rung (code), rescue (LLM or rule)
-        ok = [r for r in seg1 if r.status == "DONE" and r.last_ckpt()]
-        ranked = sorted(ok, key=lambda r: -(r.ret_recent() or -1e9))
-        keep_n = math.ceil(len(ranked) / 2)
-        survivors, cut = ranked[:keep_n], ranked[keep_n:]
-        feats = compute_features(seg1, sps)
-        rows = [{"config": r.config, "ret_recent": feats[r.id]["ret_recent"], "slope": feats[r.id]["slope"],
-                 "kl": feats[r.id]["kl"]} for r in ranked]
-        self.e.decision(self.id, "code", None, "rung",
-                        f"keep top {keep_n} of {len(ranked)} by mean return of the last 10 episodes: "
-                        f"{[r.config for r in survivors]}; cut {[r.config for r in cut]}", rows)
-        if cut:
-            res = await asyncio.to_thread(ask_rescue, self.e.llm, self.id, rows, [r.config for r in cut])
-            actor = "llm"
-            if res is None:  # rule: rescue the cut config with the steepest slope if it beats the survivors' median
-                actor = "rules"
-                surv_slopes = sorted(feats[r.id]["slope"] for r in survivors)
-                med = surv_slopes[len(surv_slopes) // 2] if surv_slopes else 0
-                best = max(cut, key=lambda r: feats[r.id]["slope"])
-                from control.monitor import Rescue
-                res = (Rescue(rescue=best.config, reason=f"rule: steepest slope among cut configs "
-                              f"({feats[best.id]['slope']} per 100k vs survivors' median {med})")
-                       if feats[best.id]["slope"] > med else Rescue(rescue=None, reason="rule: no cut config is climbing faster"))
-            if res.rescue:
-                r = next(r for r in cut if r.config == res.rescue)
-                survivors.append(r)
-                cut.remove(r)
-                self.e.decision(self.id, actor, r.id, "rescue", res.reason, feats[r.id])
-            else:
-                self.e.decision(self.id, actor, None, "note", res.reason)
-        for r in cut:
-            self.e.decision(self.id, "code", r.id, "cut", f"bottom half at the rung (return {feats[r.id]['ret_recent']})")
+            # ---------------- rung (code), rescue (LLM or rule)
+            ok = [r for r in seg1 if r.status == "DONE" and r.last_ckpt()]
+            ranked = sorted(ok, key=lambda r: -(r.ret_recent() or -1e9))
+            keep_n = math.ceil(len(ranked) / 2)
+            survivors, cut = ranked[:keep_n], ranked[keep_n:]
+            feats = compute_features(seg1, sps)
+            rows = [{"config": r.config, "ret_recent": feats[r.id]["ret_recent"], "slope": feats[r.id]["slope"],
+                     "kl": feats[r.id]["kl"]} for r in ranked]
+            self.e.decision(self.id, "code", None, "rung",
+                            f"keep top {keep_n} of {len(ranked)} by mean return of the last 10 episodes: "
+                            f"{[r.config for r in survivors]}; cut {[r.config for r in cut]}", rows)
+            if cut:
+                res = await asyncio.to_thread(ask_rescue, self.e.llm, self.id, rows, [r.config for r in cut])
+                actor = "llm"
+                if res is None:  # rule: rescue the cut config with the steepest slope if it beats the survivors' median
+                    actor = "rules"
+                    surv_slopes = sorted(feats[r.id]["slope"] for r in survivors)
+                    med = surv_slopes[len(surv_slopes) // 2] if surv_slopes else 0
+                    best = max(cut, key=lambda r: feats[r.id]["slope"])
+                    from control.monitor import Rescue
+                    res = (Rescue(rescue=best.config, reason=f"rule: steepest slope among cut configs "
+                                  f"({feats[best.id]['slope']} per 100k vs survivors' median {med})")
+                           if feats[best.id]["slope"] > med else Rescue(rescue=None, reason="rule: no cut config is climbing faster"))
+                if res.rescue:
+                    r = next(r for r in cut if r.config == res.rescue)
+                    survivors.append(r)
+                    cut.remove(r)
+                    self.e.decision(self.id, actor, r.id, "rescue", res.reason, feats[r.id])
+                else:
+                    self.e.decision(self.id, actor, None, "note", res.reason)
+            for r in cut:
+                self.e.decision(self.id, "code", r.id, "cut", f"bottom half at the rung (return {feats[r.id]['ret_recent']})")
 
-        # ---------------- wave 1, segment 2 (resume survivors)
-        self.set_phase("wave1-seg2", f"{len(survivors)} survivors continue to {2 * B1:,} steps")
-        seg2 = [self._mk(1, 2, primary, r.config, r.params, 1, B1, 2 * B1, 2 * B1, parent=r.id,
-                         resume_from=r.last_ckpt()[1]) for r in survivors]
-        await self.run_wave(seg2, wave=1)
-        final = {r.config: r for r in seg2 if r.ret_recent() is not None}
-        order = sorted(final, key=lambda c: -final[c].ret_recent()) + [r.config for r in cut]
-        w2cfgs = wave2_configs(self.plan, order)
-        self.e.decision(self.id, "code", None, "select", f"wave 2 configs: {w2cfgs} (top 2 by wave-1 return + "
-                        f"hypothesis config {self.plan.hypothesis_config})", {"wave1_order": order})
+            # ---------------- wave 1, segment 2 (resume survivors)
+            self.set_phase("wave1-seg2", f"{len(survivors)} survivors continue to {2 * B1:,} steps")
+            seg2 = [self._mk(1, 2, primary, r.config, r.params, 1, B1, 2 * B1, 2 * B1, parent=r.id,
+                             resume_from=r.last_ckpt()[1]) for r in survivors]
+            await self.run_wave(seg2, wave=1)
+            final = {r.config: r for r in seg2 if r.ret_recent() is not None}
+            order = sorted(final, key=lambda c: -final[c].ret_recent()) + [r.config for r in cut]
+            w2cfgs = wave2_configs(self.plan, order)
+            self.e.decision(self.id, "code", None, "select", f"wave 2 configs: {w2cfgs} (top 2 by wave-1 return + "
+                            f"hypothesis config {self.plan.hypothesis_config})", {"wave1_order": order})
 
         # ---------------- wave 2: confirmation with seeds, monitor active
         n2 = len(w2cfgs) * len(envs) * seeds
         self.fork_budget = int(self.e.cfg["monitor"]["fork_budget_frac"] * n2 * B2)
-        self.set_phase("wave2", f"{len(w2cfgs)} configs x {len(envs)} envs x {seeds} seeds, {B2:,} steps each")
+        self.set_phase("wave2", f"{len(w2cfgs)} agents x {len(envs)} robots x {seeds} seeds, {B2:,} steps each")
         w2 = [self._mk(2, 1, env, c, cfgs[c], s, 0, B2, B2) for env in envs for c in w2cfgs for s in range(1, seeds + 1)]
         await self.run_wave(w2, wave=2, monitor=True)
 

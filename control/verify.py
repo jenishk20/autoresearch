@@ -50,7 +50,12 @@ async def build_report(sess) -> dict:
         for cfg, xs in scores[env].items():
             lo, hi = boot_ci(xs) if len(xs) > 1 else (xs[0], xs[0])
             train = [r.ret_recent() for r in base if r.env == env and r.config == cfg and r.ret_recent() is not None]
-            rows.append({"config": cfg, "n": len(xs), "iqm": _r(iqm(xs)), "ci": [_r(lo), _r(hi)],
+            runs_c = sorted([r for r in base if r.env == env and r.config == cfg and r.eval], key=lambda r: r.eval["mean_return"])
+            video = runs_c[len(runs_c) // 2].eval.get("video_url") if runs_c else None
+            sr = [r.eval["success_rate"] for r in runs_c if r.eval.get("success_rate") is not None]
+            rows.append({"config": cfg, "n": len(xs), "iqm": _r(iqm(xs)), "ci": [_r(lo), _r(hi)], "video": video,
+                         "success": _r(np.mean(sr), 3) if sr else None,
+                         "checkpoint_videos": runs_c[len(runs_c) // 2].videos if runs_c else [],
                          "seed_scores": [_r(x) for x in xs], "train_return": _r(np.mean(train)) if train else None,
                          "steps": sess.budget["b2"]})
         rows.sort(key=lambda r: -(r["iqm"] or -1e9))
@@ -106,7 +111,7 @@ async def build_report(sess) -> dict:
     n1 = len(plan.configs)
     seg2 = len(sess.my_runs(1)) - n1
     halving = {"steps_used": (n1 + seg2) * sess.budget["b1"], "naive_steps": n1 * 2 * sess.budget["b1"]}
-    halving["saved_pct"] = _r(100 * (1 - halving["steps_used"] / halving["naive_steps"]))
+    halving["saved_pct"] = _r(100 * (1 - halving["steps_used"] / halving["naive_steps"])) if halving["naive_steps"] else 0.0
 
     with e.db_lock:
         decisions = [dict(r) for r in e.db.execute(
@@ -115,7 +120,7 @@ async def build_report(sess) -> dict:
             "SELECT ts, payload_json FROM events WHERE session_id=? AND kind='containment' ORDER BY ts", (sess.id,))]
         llm_calls = e.db.execute("SELECT COUNT(*) FROM events WHERE session_id=? AND kind='llm_call'", (sess.id,)).fetchone()[0]
 
-    artifacts = [{"run_id": r.id, "env": r.env, "config": r.config, "seed": r.seed,
+    artifacts = [{"run_id": r.id, "env": r.env, "config": r.config, "seed": r.seed, "video": (r.eval or {}).get("video_url"),
                   "checkpoint": r.last_ckpt()[1], "sha256": r.last_ckpt()[2],
                   "verify_mean": _r(r.eval["mean_return"]) if r.eval else None}
                  for r in w2 if r.last_ckpt()]

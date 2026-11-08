@@ -18,9 +18,11 @@ class Narrative(BaseModel):
     caveats: list[str] = []
 
 
-SYSTEM = """You write the narrative of an ML research report. Use ONLY numbers that appear in the given report JSON
-(you may round them as they appear there, to at most 1 decimal). Do not compute new numbers. Answer the user's
-questions directly. Say "tie" when confidence intervals overlap. Mention which predictions held.
+SYSTEM = """You write the results of an ML study for a busy reader. Use ONLY numbers that appear in the given report JSON
+(round them to whole numbers). Do not compute new numbers. Plain English, no jargon: say "reward" not "IQM" or
+"return", say "too close to call" instead of "tie" or "CI overlap", use robot names (Hopper, Walker2d) without "-v4".
+headline: one sentence, at most 14 words, answering the user's question with the winning setup and its reward.
+summary: at most 2 short sentences. findings: at most 4 items, each one short sentence. caveats: at most 2 short items.
 Schema: {"headline": str, "summary": str, "findings": [str], "caveats": [str]}"""
 
 _NUM = re.compile(r"(?<![A-Za-z_])-?\d[\d,]*(?:\.\d+)?")

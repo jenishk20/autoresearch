@@ -31,7 +31,7 @@ def test_safety_rejects_redteam_that_layer1_should_catch():
 
 def test_fallback_brief_and_plan():
     b = fallback_brief("Find a good PPO setup for Hopper and check whether it transfers to Walker2d. 20-minute budget.")
-    assert b.data_source.ref == "Hopper-v4" and b.also_evaluate_on == ["Walker2d-v4"] and b.budget_minutes == 20
+    assert b.data_source.ref == "Hopper-v4" and b.also_evaluate_on == ["Walker2d-v4"] and b.budget_minutes == 10   # capped: studies stay short
     plan = default_plan(b)
     assert plan.configs[0].resolved_params()["learning_rate"] == 3e-4
     assert "no_norm" in wave2_configs(default_plan(b), ["lr_high", "wide", "base", "no_norm", "lr_low", "explore"])

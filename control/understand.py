@@ -14,7 +14,8 @@ metric (code decides the direction): binary -> savings (only if the user gives c
   multiclass -> accuracy, logloss, f1; regression -> rmse, mae; rl -> return.
 data_source.kind: upload (user CSV), catalog, openml, or env (RL). For rl, data_source.ref is ONE env id from
   {list(RL_ENVS)} and also_evaluate_on lists other env ids to check transfer on (may be empty).
-  Map names: "hopper" -> Hopper-v4, "walker"/"walker2d" -> Walker2d-v4, "cheetah"/"halfcheetah" -> HalfCheetah-v4.
+  Map names: "hopper" -> Hopper-v4, "walker"/"walker2d" -> Walker2d-v4, "cheetah"/"halfcheetah" -> HalfCheetah-v4,
+  robot arm / Panda "reach" or "move to a point" -> PandaReachDense-v3, Panda "push" / "move a cube" -> PandaPushDense-v3.
 costs (binary churn-style problems): offer_cost, churn_loss, save_rate (0-1).
 budget_minutes: the time budget the user asked for, or null.
 questions: 1-4 research questions phrased in the user's terms.
@@ -32,6 +33,11 @@ _ENV_WORDS = [("halfcheetah", "HalfCheetah-v4"), ("cheetah", "HalfCheetah-v4"), 
 
 def _envs_in(text: str) -> list[str]:
     t, found = text.lower(), []
+    if any(w in t for w in ("panda", "robot arm", "franka", "reach", "push")):
+        if "reach" in t and "push" not in t:
+            found.append("PandaReachDense-v3")
+        if "push" in t:
+            found.append("PandaPushDense-v3")
     hits = sorted((t.find(w), env) for w, env in _ENV_WORDS if w in t)
     for _, env in hits:
         if env not in found:
@@ -41,12 +47,12 @@ def _envs_in(text: str) -> list[str]:
 
 def _minutes(text: str) -> int | None:
     m = re.search(r"(\d{1,3})\s*-?\s*(?:min|minute)", text.lower())
-    return max(2, min(240, int(m.group(1)))) if m else None
+    return max(2, min(10, int(m.group(1)))) if m else None
 
 
 def fallback_brief(query: str) -> ResearchBrief:
     envs = _envs_in(query)
-    rl_words = any(w in query.lower() for w in ("ppo", "reinforcement", " rl ", "policy", "mujoco", "locomotion"))
+    rl_words = any(w in query.lower() for w in ("ppo", "reinforcement", " rl ", "policy", "mujoco", "locomotion", "robot", "arm"))
     if envs or rl_words:
         envs = envs or ["Hopper-v4"]
         q = [f"Which PPO configuration learns best on {envs[0]}?"]

@@ -34,11 +34,17 @@ run:
 
 rl:
   sps_estimate: 1500             # replace with scripts/bench.py; updated live from observed sps
-  max_configs: 3                 # small studies: planner may pick at most this many configs
+  profile: test                  # test = N agents side by side, one short run each (fast iteration); full = screening + confirmation
+  test_agents: 2
+  test_steps: 300000
+  video_every: 50000             # checkpoint rollout video every N steps (shown live in the UI)
+  excluded_envs: [PandaReachDense-v3]   # too easy to be interesting
+  max_configs: 3                 # full profile: planner may pick at most this many configs
   seeds: 3                       # predictions need >=3 seeds to be decided
   default_budget_minutes: 5
+  max_budget_minutes: 10           # keep studies short
   # (wave-1 segment steps, wave-2 steps), largest that fits the budget wins
-  ladder: [[50000, 100000], [25000, 50000], [10000, 20480]]
+  ladder: [[50000, 100000], [25000, 50000], [10000, 20480]]   # small studies only
   verify_seconds: 15             # per verify job (10 eval episodes)
 
 monitor:

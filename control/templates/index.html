@@ -1,40 +1,57 @@
 {% extends "base.html" %}
 {% block body %}
 <section class="hero">
-  <h1>Ask a research question</h1>
-  <p class="sub">The agent writes a plan with pre-registered predictions, trains every candidate in its own sandbox, intervenes while runs are live, re-checks the winners on held-out seeds, and writes a report where every number is computed by code.</p>
+  <h1>Robots that learn,<br><em>while you watch.</em></h1>
+  <p class="lead">Describe a task. AI agents train robots in locked sandboxes and keep what works.</p>
   <form method="post" action="/sessions" class="ask">
-    <textarea name="query" id="query" rows="3" required>Find a good PPO setup for Hopper and check whether it transfers to Walker2d. 5-minute budget.</textarea>
-    <div class="row">
-      <div class="chips">
-        <button type="button" class="chip" data-q="Find a good PPO setup for Hopper and check whether it transfers to Walker2d. 5-minute budget.">PPO: Hopper → Walker2d</button>
-        <button type="button" class="chip" data-q="Quick check: which PPO settings matter most on Hopper? 5-minute budget.">Quick: Hopper, 5 min</button>
-        <button type="button" class="chip" data-q="Here's our customer CSV. A retention offer costs $50, a lost customer costs $600, and the offer keeps about 30% of customers who would otherwise leave. Who should we target?">Churn (not wired yet)</button>
-      </div>
-      <button class="primary" type="submit">Start research</button>
-    </div>
+    <input name="query" id="query" required autocomplete="off" value="Teach the Panda arm to push a cube to a target.">
+    <button class="btn" type="submit">Start</button>
   </form>
+  <div class="chips">
+    <button type="button" class="chip" data-q="Teach the Panda arm to push a cube to a target.">Panda · push</button>
+    <button type="button" class="chip" data-q="Teach the Hopper robot to hop forward.">Hopper · hop</button>
+  </div>
 </section>
 
-<section>
-  <h2>Sessions</h2>
-  {% if sessions %}
-  <table class="list">
-    <thead><tr><th>Started</th><th>Query</th><th>Status</th><th></th></tr></thead>
-    <tbody>
-    {% for s in sessions %}
-      <tr>
-        <td class="mono">{{ s.created }}</td>
-        <td class="q"><a href="/sessions/{{ s.id }}">{{ s.prompt }}</a></td>
-        <td><span class="status s-{{ s.status }}">{{ s.phase or s.status }}</span></td>
-        <td>{% if s.has_report %}<a href="/sessions/{{ s.id }}/report">report →</a>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}<p class="muted">No sessions yet.</p>{% endif %}
+<section id="gallery-wrap" class="hidden">
+  <h2>Trained</h2>
+  <div id="gallery" class="gallery"></div>
 </section>
+
+{% if sessions %}
+<section>
+  <h2>Recent</h2>
+  <div class="list">
+    {% for s in sessions[:8] %}{% set st = s.phase or s.status %}
+      <a href="/sessions/{{ s.id }}{{ '/report' if s.has_report else '' }}"><span>{{ s.prompt[:80] }}{% if s.prompt|length > 80 %}…{% endif %}</span>
+        <span class="pill {{ 'ok' if s.has_report else 'bad' if st == 'failed' else '' }}">{{ 'done' if s.has_report else st }}</span></a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <script>
-document.querySelectorAll('.chip').forEach(b => b.onclick = () => { document.getElementById('query').value = b.dataset.q; });
+document.querySelectorAll('.chip[data-q]').forEach(b => b.onclick = () => { document.getElementById('query').value = b.dataset.q; });
+const ROBOT = {"Hopper-v4": "Hopper", "Walker2d-v4": "Walker2d", "HalfCheetah-v4": "HalfCheetah", "PandaReachDense-v3": "Panda · reach", "PandaPushDense-v3": "Panda · push"};
+(async () => {
+  const ids = {{ sessions | selectattr("has_report") | map(attribute="id") | list | tojson }};
+  const best = {};
+  for (const id of ids.slice(0, 15)) {
+    try {
+      const r = await (await fetch(`/api/sessions/${id}/report.json`)).json();
+      for (const [env, t] of Object.entries(r.per_env || {})) {
+        const row = (t.table || [])[0];
+        if (!row || !row.video) continue;
+        if (!best[env] || row.iqm > best[env].iqm) best[env] = { ...row, env, id };
+      }
+    } catch (e) {}
+  }
+  const cards = Object.values(best);
+  if (!cards.length) return;
+  document.getElementById('gallery-wrap').classList.remove('hidden');
+  document.getElementById('gallery').innerHTML = cards.map(c => `
+    <a class="tile" href="/sessions/${c.id}/report"><video src="${c.video}" autoplay muted loop playsinline></video>
+    <div class="cap"><span>${ROBOT[c.env] || c.env}</span><span class="muted">${c.success != null ? Math.round(c.success * 100) + '% success' : Math.round(c.iqm).toLocaleString() + ' reward'}</span></div></a>`).join('');
+})();
 </script>
 {% endblock %}

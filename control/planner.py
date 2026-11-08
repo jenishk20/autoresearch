@@ -13,9 +13,13 @@ ENV_FACTS = {
     "Walker2d-v4": "obs 17 / act 6, terminates on fall, PPO ~2.5k-4k at 1M steps",
     "HalfCheetah-v4": "obs 17 / act 6, never terminates (always 1000 steps), PPO ~1.5k-3k at 1M, high seed variance",
     "InvertedDoublePendulum-v4": "obs 11 / act 1, terminates on fall, max ~9.3k, smoke test",
+    "PandaReachDense-v3": "Franka Panda arm must move its gripper to a random target point; 50-step episodes; dense reward = "
+                          "-distance (0 is perfect); success = within 5 cm. PPO usually solves it in ~50k-100k steps",
+    "PandaPushDense-v3": "Franka Panda arm must push a cube across the table to a target; 50-step episodes; dense reward = "
+                         "-cube-to-target distance; success = cube within 5 cm. Hard for PPO in small budgets",
 }
 
-SYSTEM = """You are an RL research lead planning PPO experiments on Gymnasium MuJoCo v4 tasks under a fixed CPU budget.
+SYSTEM = """You are an RL research lead planning PPO experiments on simulated robot tasks under a fixed CPU budget.
 Choose 2-{max_configs} PPO configs (at most {max_configs}) from the allowed space to test specific hypotheses (not to cover the grid). Each config
 gives only the params it changes from the default (hidden 64x64, learning_rate 3e-4, ent_coef 0.0, norm_obs true).
 Write 3-5 falsifiable predictions with a probability you would bet at (0.05-0.95).
@@ -45,8 +49,8 @@ def default_plan(brief: ResearchBrief, max_configs: int = 6) -> Plan:
          "kind": "a_beats_b", "dataset": env, "a": "base", "b": "no_norm", "min_ratio": 1.3, "p": 0.8},
         {"id": "P2", "statement": "lr=1e-3 raises the kl_high flag in at least one run.", "kind": "flag_count",
          "dataset": env, "a": "lr_high", "flag": "kl_high", "min_count": 1, "p": 0.6},
-        {"id": "P3", "statement": f"base reaches a held-out return of 500 on {env}.", "kind": "reaches_threshold",
-         "dataset": env, "a": "base", "threshold": 500.0, "p": 0.5},
+        {"id": "P3", "statement": f"base reaches a held-out reward of {-3 if env.startswith('Panda') else 500} on {env}.",
+         "kind": "reaches_threshold", "dataset": env, "a": "base", "threshold": -3.0 if env.startswith("Panda") else 500.0, "p": 0.5},
     ]
     if brief.also_evaluate_on:
         preds.append({"id": "P4", "statement": f"The {env} winner is top-2 on {brief.also_evaluate_on[0]}.",
@@ -62,6 +66,15 @@ def default_plan(brief: ResearchBrief, max_configs: int = 6) -> Plan:
     ][:max_configs]
     names = {c[0] for c in cfgs}
     preds = [p for p in preds if p["a"] in names | {"winner"} and p.get("b") in names | {None}]
+    thr = -3.0 if env.startswith("Panda") else 500.0
+    for c in [c[0] for c in cfgs]:   # keep >= 3 bets when the team is small
+        if len(preds) >= 3:
+            break
+        if not any(p["kind"] == "reaches_threshold" and p["a"] == c for p in preds):
+            preds.append({"id": f"P{len(preds) + 1}", "statement": f"{c} reaches a held-out reward of {thr:g} on {env}.",
+                          "kind": "reaches_threshold", "dataset": env, "a": c, "threshold": thr, "p": 0.5})
+    for i, p in enumerate(preds, 1):
+        p["id"] = f"P{i}"
     return Plan.model_validate({
         "task_summary": f"Screen {len(cfgs)} PPO variants on {env}, confirm the best with several seeds"
                         + (f", check transfer to {', '.join(brief.also_evaluate_on)}" if brief.also_evaluate_on else ""),
