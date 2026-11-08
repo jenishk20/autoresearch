@@ -12,7 +12,7 @@ llm:
 worker:
   mode: vultr                    # vultr = gVisor on Vultr VMs; local = dev subprocesses (no sandbox)
   lifecycle: shared              # shared = one VM reused by every session; per_session = boot + destroy each time
-  keep_until: "18:00"            # shared VM is destroyed automatically at this local time (end of hackathon)
+  keep_until: null               # e.g. "18:00" destroys the shared VM at that local time; off while the public demo is hosted on it
   region: lax
   plan: vhp-8c-16gb-amd          # 8 vCPU / 16 GB -> 3 sandbox slots of 2 vCPU / 3 GB
   price_per_hour: 0.132

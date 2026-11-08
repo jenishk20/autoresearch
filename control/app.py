@@ -40,12 +40,22 @@ app.mount("/media", StaticFiles(directory=ROOT / "runs" / "media"), name="media"
 templates = Jinja2Templates(directory=HERE / "templates")
 
 
+ACCESS_CODE = __import__("os").environ.get("ACCESS_CODE", "")
+
+
+def check_code(code: str | None):
+    """Public demo: anyone can watch; starting studies or attacks needs the access code."""
+    if ACCESS_CODE and (code or "").strip() != ACCESS_CODE:
+        raise HTTPException(403, "This action needs the demo access code.")
+
+
 def status() -> dict:
     nodes = [{"name": n.name, "healthy": n.healthy, "backend": n.backend, "sandboxed": n.sandboxed,
               "slots": n.slots, "running": engine.on_node.get(n.name, 0)} for n in engine.nodes]
     w = engine.cfg.get("worker", {})
     prov = getattr(engine, "provisioner", None)
     return {"llm": engine.llm.status, "nodes": nodes, "sandboxed": engine.sandboxed, "worker_mode": engine.worker_mode,
+            "needs_code": bool(ACCESS_CODE),
             "worker": {"plan": w.get("plan"), "region": w.get("region"), "price_per_hour": w.get("price_per_hour"),
                        **(prov.info() if prov else {})},
             "sps_estimate": round(engine.sps_estimate()), "slots": engine.total_slots}
@@ -71,7 +81,8 @@ def index(request: Request):
 
 
 @app.post("/sessions")
-async def create_session(query: str = Form(...)):
+async def create_session(query: str = Form(...), code: str = Form(default="")):
+    check_code(code)
     q = query.strip()
     if not q:
         raise HTTPException(400, "empty query")
@@ -126,6 +137,16 @@ def state(sid: str):
                 d = json.loads(r["json"])
                 if d.get("val_metric") is not None:
                     series.setdefault(r["run_id"], []).append([d["step"], d["val_metric"]])
+            by_id = {r["id"]: r for r in runs}
+            for r in engine.db.execute("SELECT m.run_id, m.type, m.json FROM metrics m JOIN runs r ON r.id=m.run_id "
+                                       "WHERE r.session_id=? AND m.type IN ('video','summary') ORDER BY m.step", (sid,)):
+                d, run = json.loads(r["json"]), by_id.get(r["run_id"])
+                if run is None:
+                    continue
+                if r["type"] == "video":
+                    run.setdefault("videos", []).append(d)
+                else:   # imported jobs: latest progress + held-out success
+                    run.update({k: d[k] for k in ("step", "success", "eval_success", "video_url") if k in d})
     report = _json(row["report_json"])
     return {
         "id": sid, "prompt": row["prompt"],
@@ -159,7 +180,8 @@ async def stream(request: Request, sid: str):
 
 
 @app.post("/api/sessions/{sid}/redteam/{preset}")
-async def redteam(sid: str, preset: str):
+async def redteam(sid: str, preset: str, request: Request):
+    check_code(request.headers.get("x-access-code"))
     if preset not in REDTEAM:
         raise HTTPException(404, "unknown preset")
     s = SESSIONS.get(sid)
@@ -181,7 +203,8 @@ async def redteam(sid: str, preset: str):
 
 
 @app.post("/api/sessions/{sid}/cancel")
-async def cancel(sid: str):
+async def cancel(sid: str, request: Request):
+    check_code(request.headers.get("x-access-code"))
     s = SESSIONS.get(sid)
     if not s or not s.task:
         raise HTTPException(404)

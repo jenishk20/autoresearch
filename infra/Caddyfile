@@ -1,0 +1,6 @@
+45-32-69-197.sslip.io {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+	}
+}

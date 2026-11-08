@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the imported Panda push study every 5 minutes
+After=autoresearch-control.service
+
+[Service]
+WorkingDirectory=/opt/autoresearch
+ExecStart=/opt/autoresearch/scripts/push_refresh_loop.sh
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

@@ -97,6 +97,8 @@ class Vultr:
         rules = self._req("GET", f"/firewalls/{gid}/rules", params={"per_page": 500}).get("firewall_rules", [])
         have = set()
         for r in rules:
+            if r["port"] in ("80", "443"):   # public web demo (Caddy) stays open
+                continue
             if r["subnet"] != allow_ip:
                 self._req("DELETE", f"/firewalls/{gid}/rules/{r['id']}")
             else:
@@ -106,6 +108,14 @@ class Vultr:
                 self._req("POST", f"/firewalls/{gid}/rules", json={"ip_type": "v4", "protocol": "tcp", "subnet": allow_ip,
                                                                   "subnet_size": 32, "port": p, "notes": "autoresearch control"})
         return gid
+
+    def allow_public_web(self, gid: str):
+        rules = self._req("GET", f"/firewalls/{gid}/rules", params={"per_page": 500}).get("firewall_rules", [])
+        have = {r["port"] for r in rules if r["subnet"] == "0.0.0.0"}
+        for p in ("80", "443"):
+            if p not in have:
+                self._req("POST", f"/firewalls/{gid}/rules", json={"ip_type": "v4", "protocol": "tcp", "subnet": "0.0.0.0",
+                                                                  "subnet_size": 0, "port": p, "notes": "public demo"})
 
 
 def my_public_ip() -> str:

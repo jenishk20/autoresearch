@@ -1,0 +1,14 @@
+[Unit]
+Description=AutoLab control plane (web UI + agents), behind Caddy
+After=network-online.target autoresearch-node.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/autoresearch
+ExecStart=/opt/autoresearch/.venv/bin/uvicorn control.app:app --host 127.0.0.1 --port 8000 --log-level warning
+ExecStartPost=/bin/sh -c 'sleep 4; /opt/autoresearch/.venv/bin/python scripts/import_push_runs.py || true'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

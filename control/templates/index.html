@@ -5,6 +5,7 @@
   <p class="lead">Describe a task. AI agents train robots in locked sandboxes and keep what works.</p>
   <form method="post" action="/sessions" class="ask">
     <input name="query" id="query" required autocomplete="off" value="Teach the Panda arm to push a cube to a target.">
+    {% if status.needs_code %}<input name="code" placeholder="Access code" autocomplete="off" style="flex:0 0 130px;border-left:1px solid var(--line);padding-left:12px">{% endif %}
     <button class="btn" type="submit">Start</button>
   </form>
   <div class="chips">

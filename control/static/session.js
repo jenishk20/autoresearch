@@ -19,7 +19,8 @@
   const fmt = (n) => (n == null ? "—" : Math.round(n).toLocaleString());
   const pct = (x) => (x == null ? "—" : `${Math.round(x * 100)}%`);
   const params = (p) => Object.entries(p || {}).map(([k, v]) => ({ learning_rate: `lr ${v}`, hidden: `${v} net`, ent_coef: `explore ${v}`, norm_obs: v ? "" : "raw inputs" }[k] ?? `${k} ${v}`)).filter(Boolean).join(" · ") || "defaults";
-  const agentName = (cfg) => { const b = base(cfg); if (!(b in S.letter)) S.letter[b] = LETTERS[Object.keys(S.letter).length % LETTERS.length]; return `Agent ${S.letter[b]}`; };
+  // agents are named after what they are (their setup), not "Agent A/B"
+  const agentName = (cfg) => base(cfg).replace(/_/g, " ").replace(/\b(ppo|sac|her|lr|obs)\b/gi, (m) => m.toUpperCase());
   const score = (r) => isGoal(r.env) ? pct(r.eval_success ?? r.success) : fmt(r.eval_mean ?? r.ret_recent);
   const scoreLabel = (r) => (isGoal(r.env) ? "success" : "reward") + (r.eval_mean != null ? " · new situations" : "");
 
@@ -28,8 +29,8 @@
     const rs = Object.values(S.runs).filter((r) => r.kind !== "verify" && r.wave >= 1);
     if (!rs.length) return [];
     const top = Math.max(...rs.map((r) => r.wave));
-    const letter = (r) => agentName(r.config);
-    return rs.filter((r) => r.wave === top).sort((a, b) => a.env.localeCompare(b.env) || letter(a).localeCompare(letter(b)) || a.seed - b.seed || (a.is_fork - b.is_fork));
+    const order = (r) => { const i = (S.plan?.configs || []).findIndex((c) => c.name === base(r.config)); return i < 0 ? 99 : i; };
+    return rs.filter((r) => r.wave === top).sort((a, b) => a.env.localeCompare(b.env) || order(a) - order(b) || a.seed - b.seed || (a.is_fork - b.is_fork));
   };
   function ensureCard(r) {
     if (S.cards[r.id]) return S.cards[r.id];
@@ -59,14 +60,16 @@
     vid.src = v.url; vid.play().catch(() => {});
     const tag = stage.querySelector(".tag");
     tag.classList.remove("hidden");
-    tag.textContent = `${v.final ? "final · " : ""}${fmt(v.step / 1000)}k steps${v.success != null ? " · " + (v.success ? "success" : "missed") : ""}`;
+    const sv = v.success == null ? "" : (v.success > 0 && v.success < 1 ? ` · ${pct(v.success)} success` : ` · ${v.success ? "success" : "missed"}`);
+    tag.textContent = `${v.final ? "final · " : ""}${fmt(v.step / 1000)}k steps${sv}`;
     c.el.querySelectorAll(".strip button").forEach((b) => b.classList.toggle("on", b.dataset.url === v.url));
   }
   function renderCard(r) {
     const c = ensureCard(r);
     c.el.querySelector(".name").textContent = `${agentName(r.config)}${r.is_fork ? " · branch" : ""}`;
     const planned = S.plan?.configs.find((x) => x.name === base(r.config));
-    c.el.querySelector(".cfg").textContent = `${ROBOT[r.env] || r.env} · ${params(planned ? planned.params : {})}${r.seed > 1 ? " · seed " + r.seed : ""}`;
+    const what = planned && Object.keys(planned.params || {}).length ? params(planned.params) : (planned ? planned.rationale.split(":")[0] : "defaults");
+    c.el.querySelector(".cfg").textContent = `${ROBOT[r.env] || r.env} · ${what}${r.seed > 1 ? " · seed " + r.seed : ""}`;
     c.el.querySelector(".metric").textContent = score(r);
     const trained = Math.round(100 * Math.max(0, Math.min(1, (r.step - r.start_at) / Math.max(1, r.total - r.start_at))));
     c.el.querySelector(".mlabel").textContent = r.status === "RUNNING" || r.status === "PENDING" ? `${scoreLabel(r)} · ${trained}% trained` : scoreLabel(r);
@@ -176,7 +179,9 @@
     $("sandbox").innerHTML = on ? `<span class="dot ok"></span> Each agent trains in its own sandbox · no internet` : `<span class="dot warn"></span> Dev mode · not sandboxed`;
     $("redteam").innerHTML = (presets || []).map((p) => `<button class="icon-btn" data-p="${p}" title="Try to break out: ${(ATTACKS[p] || ["", p])[1]}" ${on ? "" : "disabled"}>${(ATTACKS[p] || ["?"])[0]}</button>`).join("");
     $("redteam").querySelectorAll("button").forEach((b) => (b.onclick = async () => {
-      const r = await fetch(`/api/sessions/${SID}/redteam/${b.dataset.p}`, { method: "POST" });
+      const code = window.ACCESS_CODE || (window.ACCESS_CODE = prompt("Access code") || "");
+      const r = await fetch(`/api/sessions/${SID}/redteam/${b.dataset.p}`, { method: "POST", headers: { "x-access-code": code } });
+      if (r.status === 403) window.ACCESS_CODE = "";
       if (!r.ok) alert((await r.json()).detail);
     }));
   }
@@ -213,7 +218,7 @@
       else if (ev.type === "plan") renderPlan(ev.plan);
       else if (ev.type === "report") { $("report-link").classList.remove("hidden"); renderWinner(); }
     };
-    $("cancel").onclick = async () => { if (confirm("Stop this study?")) await fetch(`/api/sessions/${SID}/cancel`, { method: "POST" }); };
+    $("cancel").onclick = async () => { if (confirm("Stop this study?")) await fetch(`/api/sessions/${SID}/cancel`, { method: "POST", headers: { "x-access-code": window.ACCESS_CODE || prompt("Access code") || "" } }); };
     setInterval(() => {
       if (!S.created || ["done", "failed", "unsupported", "interrupted", "cancelled"].includes(S.phase)) return;
       const s = Math.round(Date.now() / 1000 - S.created);
