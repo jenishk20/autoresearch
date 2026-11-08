@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+runs/
+*.pt
+*.mp4
+.pytest_cache/
+.DS_Store
