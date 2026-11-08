@@ -1,5 +1,9 @@
 # RL auto-research agent — build plan
 
+> **Status: this is now the RL adapter spec (Demo 2).** The main plan is `docs/autoresearch-plan.md`, and it wins wherever the two differ.
+> Still authoritative here: §4.1 (PPO worker changes 1–10), §4.2 (sandbox flags), §4.3 (node agent API, plus the additions in main plan §10.5), §6.1–6.3 (envs, search space, halving maths) and the RL parts of §4.7–4.8.
+> Superseded by the main plan: §0 pitch, §1 checklist, §3 repo layout, §5 schemas (now generic, main plan §10), §6.4–6.5 presets, §7 budget, §8 timeline, §11 video script, §12 open items.
+
 **Event:** Vultr Agent Rush (lablab.ai), Challenge 1 "Blast Radius Zero" · **Due:** today, 8 Nov 2026 (check the exact cutoff time on the lablab page and write it here: `DEADLINE = __:__`)
 **Team:** 2 people · **Stack:** CleanRL-style PyTorch workers, Docker + gVisor on Vultr CPU VMs, Vultr Serverless Inference for every LLM call · **No GPUs**
 

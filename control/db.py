@@ -1,4 +1,4 @@
-"""SQLite schema (plan §5.5). WAL mode so the poller and the web app can share the file."""
+"""SQLite schema (main plan §10.4). WAL mode so the poller and the web app can share the file."""
 from __future__ import annotations
 
 import sqlite3
@@ -6,15 +6,23 @@ from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY, prompt TEXT, preset TEXT, status TEXT,
-  plan_json TEXT, report_json TEXT, created_at REAL
+  id TEXT PRIMARY KEY, prompt TEXT, status TEXT,
+  brief_json TEXT, profile_json TEXT, report_json TEXT, created_at REAL
+);
+CREATE TABLE IF NOT EXISTS datasets (
+  sha256 TEXT PRIMARY KEY, name TEXT, source TEXT, n_rows INTEGER,
+  train_path TEXT, sealed_path TEXT, created_at REAL
+);
+CREATE TABLE IF NOT EXISTS plans (
+  session_id TEXT, round INTEGER, plan_json TEXT, PRIMARY KEY (session_id, round)
 );
 CREATE TABLE IF NOT EXISTS runs (
-  id TEXT PRIMARY KEY, session_id TEXT, wave INTEGER, segment INTEGER, env_id TEXT,
-  config_name TEXT, seed INTEGER, params_json TEXT, parent_run_id TEXT,
-  start_step INTEGER, total_steps INTEGER, node TEXT, status TEXT,
-  exit_code INTEGER, oom_killed INTEGER, started_at REAL, ended_at REAL
+  id TEXT PRIMARY KEY, session_id TEXT, round INTEGER, wave INTEGER, segment INTEGER,
+  kind TEXT, task TEXT, dataset TEXT, model TEXT, config_name TEXT, seed INTEGER,
+  params_json TEXT, parent_run_id TEXT, start_at INTEGER, budget_total INTEGER,
+  node TEXT, status TEXT, exit_code INTEGER, oom_killed INTEGER, started_at REAL, ended_at REAL
 );
+CREATE INDEX IF NOT EXISTS runs_session ON runs(session_id, round, wave);
 CREATE TABLE IF NOT EXISTS metrics (
   run_id TEXT, type TEXT, step INTEGER, t REAL, json TEXT
 );
@@ -30,13 +38,14 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, ts REAL, kind TEXT, payload_json TEXT
 );
+CREATE INDEX IF NOT EXISTS events_session ON events(session_id, ts);
 CREATE TABLE IF NOT EXISTS artifacts (
   run_id TEXT, kind TEXT, path TEXT, sha256 TEXT
 );
 """
 
 
-def connect(path: str | Path = "rlagent.db") -> sqlite3.Connection:
+def connect(path: str | Path = "autoresearch.db") -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
