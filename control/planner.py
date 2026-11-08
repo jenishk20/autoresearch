@@ -16,7 +16,7 @@ ENV_FACTS = {
 }
 
 SYSTEM = """You are an RL research lead planning PPO experiments on Gymnasium MuJoCo v4 tasks under a fixed CPU budget.
-Choose 4-8 PPO configs from the allowed space to test specific hypotheses (not to cover the grid). Each config
+Choose 2-{max_configs} PPO configs (at most {max_configs}) from the allowed space to test specific hypotheses (not to cover the grid). Each config
 gives only the params it changes from the default (hidden 64x64, learning_rate 3e-4, ent_coef 0.0, norm_obs true).
 Write 3-5 falsifiable predictions with a probability you would bet at (0.05-0.95).
 
@@ -38,7 +38,7 @@ Schema:
   "transfer_to": str|null, "top_k": int|null, "p": float}]}"""
 
 
-def default_plan(brief: ResearchBrief) -> Plan:
+def default_plan(brief: ResearchBrief, max_configs: int = 6) -> Plan:
     env = brief.data_source.ref
     preds = [
         {"id": "P1", "statement": f"Observation normalisation helps: base beats no_norm by >=1.3x on {env}.",
@@ -59,9 +59,11 @@ def default_plan(brief: ResearchBrief) -> Plan:
         ("lr_low", {"learning_rate": 1e-4}, "stabler but slower"),
         ("wide", {"hidden": "256x256"}, "more capacity"),
         ("explore", {"ent_coef": 0.01}, "entropy bonus for exploration"),
-    ]
+    ][:max_configs]
+    names = {c[0] for c in cfgs}
+    preds = [p for p in preds if p["a"] in names | {"winner"} and p.get("b") in names | {None}]
     return Plan.model_validate({
-        "task_summary": f"Screen 6 PPO variants on {env}, confirm the best with several seeds"
+        "task_summary": f"Screen {len(cfgs)} PPO variants on {env}, confirm the best with several seeds"
                         + (f", check transfer to {', '.join(brief.also_evaluate_on)}" if brief.also_evaluate_on else ""),
         "configs": [{"name": n, "model": "ppo", "params": p, "rationale": r} for n, p, r in cfgs],
         "hypothesis_config": "no_norm", "predictions": preds})
@@ -88,12 +90,11 @@ def wave2_configs(plan: Plan, ranked: list[str], cap: int = 4) -> list[str]:
 def size_budget(n_cfg: int, n_envs: int, minutes: float, sps: float, slots: int, cfg: dict) -> dict:
     """Pick the largest (wave-1 segment, wave-2) step ladder rung that fits (formulas from plan §12)."""
     seeds, verify_s = cfg["seeds"], cfg["verify_seconds"]
-    n_w2 = min(4, max(3, n_cfg // 2)) * n_envs * seeds
     avail = minutes * 60 - 45   # LLM + startup overhead
     notes = []
 
     def est(b1, b2, s_):
-        n2 = min(4, max(3, n_cfg // 2)) * n_envs * s_
+        n2 = min(n_cfg, 3) * n_envs * s_
         w1 = math.ceil(n_cfg / slots) * b1 / sps + math.ceil(math.ceil(n_cfg / 2) / slots) * b1 / sps
         w2 = math.ceil(n2 / slots) * b2 / sps
         ver = math.ceil(n2 / slots) * verify_s
@@ -113,7 +114,22 @@ def size_budget(n_cfg: int, n_envs: int, minutes: float, sps: float, slots: int,
             "slots": slots, "minutes": minutes, "notes": notes}
 
 
-def plan_rl(llm, session_id: str, brief: ResearchBrief, budget_hint: dict) -> tuple[Plan, str]:
+def trim_plan(plan: Plan, max_configs: int) -> tuple[Plan, str | None]:
+    """Keep the hypothesis config and configs that predictions reference first; drop predictions that lose a config."""
+    if len(plan.configs) <= max_configs:
+        return plan, None
+    order = [plan.hypothesis_config] + [r for p in plan.predictions for r in (p.a, p.b) if r] + [c.name for c in plan.configs]
+    keep = []
+    for n in order:
+        if n not in keep and any(c.name == n for c in plan.configs):
+            keep.append(n)
+    keep = keep[:max_configs]
+    preds = [p for p in plan.predictions if (p.a in keep or p.a == "winner") and (p.b is None or p.b in keep)]
+    new = plan.model_copy(update={"configs": [c for c in plan.configs if c.name in keep], "predictions": preds})
+    return new, f"planner asked for {len(plan.configs)} configs, trimmed to {len(keep)}: {keep}"
+
+
+def plan_rl(llm, session_id: str, brief: ResearchBrief, budget_hint: dict, max_configs: int = 3) -> tuple[Plan, str]:
     envs = [brief.data_source.ref, *brief.also_evaluate_on]
     user = json.dumps({
         "brief": brief.model_dump(), "env_facts": {e: ENV_FACTS[e] for e in envs},
@@ -123,9 +139,9 @@ def plan_rl(llm, session_id: str, brief: ResearchBrief, budget_hint: dict) -> tu
                   "the top 2 + hypothesis_config on all envs with several seeds; winners are re-scored on held-out seeds.",
     }, indent=1)
     try:
-        plan = llm.ask_json("plan", session_id, SYSTEM, user, Plan)
+        plan = llm.ask_json("plan", session_id, SYSTEM.replace("{max_configs}", str(max_configs)), user, Plan)
         if any(c.model != "ppo" for c in plan.configs):
             raise LLMFailed("non-ppo model in RL plan")
         return plan, "llm"
     except LLMFailed:
-        return default_plan(brief), "rules"
+        return default_plan(brief, max_configs), "rules"

@@ -1,12 +1,29 @@
 # Control-plane settings. Env vars (from .env) override where noted.
 llm:
   base_url: https://api.vultrinference.com/v1
-  model: glm-5.3                 # LLM_MODEL overrides this if Vultr actually serves that model
-  fallback_models: [glm-5.3, deepseek-v4.1-flash-1017, qwen3.8-27b, glm-5.3-flash]
-  timeout_s: 60
-  max_tokens: 2500
+  # Vultr's chat models reason before answering; reasoning tokens count against max_tokens, so keep it high.
+  # Tested 8 Nov on the planner prompt: mimo-v2.6-pro valid first try (8.5 s); deepseek-v4.1-flash and
+  # qwen3.8-27b valid at 8k tokens; glm-5.3 ran out of tokens while reasoning.
+  model: mimo-v2.6-pro           # LLM_MODEL overrides this if Vultr actually serves that model
+  fallback_models: [mimo-v2.6-pro, deepseek-v4.1-flash-1017, qwen3.8-27b]
+  timeout_s: 120
+  max_tokens: 8000
 
-nodes:                           # one entry per worker VM (node agent)
+worker:
+  mode: vultr                    # vultr = gVisor on Vultr VMs; local = dev subprocesses (no sandbox)
+  lifecycle: shared              # shared = one VM reused by every session; per_session = boot + destroy each time
+  keep_until: "18:00"            # shared VM is destroyed automatically at this local time (end of hackathon)
+  region: lax
+  plan: vhp-8c-16gb-amd          # 8 vCPU / 16 GB -> 3 sandbox slots of 2 vCPU / 3 GB
+  price_per_hour: 0.132
+  snapshot_prefix: autoresearch-worker
+  firewall: autoresearch-workers # allows only this machine's public IP on 22/8100
+  slots: 3
+  sps_estimate: 950              # measured: 3 parallel PPO runs under gVisor on vhp-8c-16gb-amd (infra/bench_gvisor.sh)
+  boot_timeout_s: 900
+  max_lifetime_min: 60           # per_session mode only
+
+nodes:                           # local mode only: static node agents
   - name: local
     url: http://127.0.0.1:8100   # NODE_URL overrides for the first node
     token_env: NODE_TOKEN
@@ -17,10 +34,11 @@ run:
 
 rl:
   sps_estimate: 1500             # replace with scripts/bench.py; updated live from observed sps
-  seeds: 3
-  default_budget_minutes: 15
+  max_configs: 3                 # small studies: planner may pick at most this many configs
+  seeds: 3                       # predictions need >=3 seeds to be decided
+  default_budget_minutes: 5
   # (wave-1 segment steps, wave-2 steps), largest that fits the budget wins
-  ladder: [[150000, 300000], [100000, 200000], [50000, 100000], [25000, 50000], [10000, 20480]]
+  ladder: [[50000, 100000], [25000, 50000], [10000, 20480]]
   verify_seconds: 15             # per verify job (10 eval episodes)
 
 monitor:

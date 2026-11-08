@@ -11,7 +11,9 @@
 <header class="top">
   <a class="brand" href="/"><span class="logo">◆</span> Autoresearch</a>
   <div class="pills">
-    {% if status.sandboxed %}
+    {% if status.worker_mode == "vultr" %}
+      <span class="pill ok" title="Every job runs in gVisor with no network on a Vultr VM ({{ status.worker.plan }}, {{ status.worker.region }}). Worker: {{ status.worker.status }}. Shared VM is destroyed at {{ status.worker.keep_until }}.">Sandbox: gVisor on Vultr · {{ status.worker.status }}</span>
+    {% elif status.sandboxed %}
       <span class="pill ok" title="Every job runs in a gVisor sandbox with no network">Sandbox: gVisor</span>
     {% else %}
       <span class="pill warn" title="Local dev backend: plain subprocesses, no isolation. Red-team presets are disabled.">Sandbox: OFF (local dev)</span>

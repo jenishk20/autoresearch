@@ -41,7 +41,11 @@ templates = Jinja2Templates(directory=HERE / "templates")
 def status() -> dict:
     nodes = [{"name": n.name, "healthy": n.healthy, "backend": n.backend, "sandboxed": n.sandboxed,
               "slots": n.slots, "running": engine.on_node.get(n.name, 0)} for n in engine.nodes]
-    return {"llm": engine.llm.status, "nodes": nodes, "sandboxed": engine.sandboxed,
+    w = engine.cfg.get("worker", {})
+    prov = getattr(engine, "provisioner", None)
+    return {"llm": engine.llm.status, "nodes": nodes, "sandboxed": engine.sandboxed, "worker_mode": engine.worker_mode,
+            "worker": {"plan": w.get("plan"), "region": w.get("region"), "price_per_hour": w.get("price_per_hour"),
+                       **(prov.info() if prov else {})},
             "sps_estimate": round(engine.sps_estimate()), "slots": engine.total_slots}
 
 
@@ -99,7 +103,7 @@ def state(sid: str):
             "SELECT ts, actor, run_id, action, reason FROM decisions WHERE session_id=? ORDER BY ts", (sid,))]
         events = [{"ts": r["ts"], "kind": r["kind"], "payload": json.loads(r["payload_json"])} for r in engine.db.execute(
             "SELECT ts, kind, payload_json FROM events WHERE session_id=? AND kind IN "
-            "('phase','flag','containment','error','llm_call','redteam') ORDER BY ts DESC LIMIT 400", (sid,))][::-1]
+            "('phase','flag','containment','error','llm_call','redteam','worker') ORDER BY ts DESC LIMIT 400", (sid,))][::-1]
         plan_row = engine.db.execute("SELECT plan_json FROM plans WHERE session_id=? AND round=1", (sid,)).fetchone()
     runner = SESSIONS.get(sid)
     live = [r for r in engine.runs.values() if r.session_id == sid]
@@ -180,7 +184,7 @@ async def cancel(sid: str):
     if not s or not s.task:
         raise HTTPException(404)
     for r in engine.runs.values():
-        if r.session_id == sid and r.status == "RUNNING":
+        if r.session_id == sid and r.status == "RUNNING" and engine.node_or_none(r):
             await engine.node_of(r).kill(r.id)
         elif r.session_id == sid and r.status == "PENDING":
             engine._finish(r, "STOPPED", "session cancelled")

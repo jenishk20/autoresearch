@@ -84,3 +84,5 @@ tr.fork td:first-child { font-style: italic; } tr.win td { background: var(--ok-
 .report-head { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
 .headline { font-size: 22px; margin-top: 10px; }
 .sha { word-break: break-all; }
+
+.worker { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: var(--info-bg); color: var(--ink); }

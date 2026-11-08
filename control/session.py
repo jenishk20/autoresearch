@@ -65,7 +65,12 @@ class SessionRunner:
 
     # ------------------------------------------------------------ main
     async def run(self):
+        prov = self.e.provisioner
+        self.vm_task = None
         try:
+            if prov.mode == "vultr":   # boot the session's VM while the LLM works on the brief and plan
+                self.e.log_event(self.id, "worker", {"msg": "connecting to the gVisor worker VM"})
+                self.vm_task = asyncio.create_task(prov.acquire(self.id))
             self.set_phase("understand", "turning the query into a research brief")
             self.brief, actor = await asyncio.to_thread(understand, self.e.llm, self.id, self.query)
             self._save(brief_json=self.brief.model_dump_json())
@@ -90,6 +95,11 @@ class SessionRunner:
             self._save(status="failed")
             self.e.log_event(self.id, "error", {"error": str(ex), "trace": traceback.format_exc()[-2000:]})
             self.set_phase("failed", str(ex))
+        finally:
+            if self.vm_task is not None:
+                if not self.vm_task.done():
+                    self.vm_task.cancel()
+                await asyncio.shield(prov.release(self.id))
 
     async def run_rl(self):
         b = self.brief
@@ -99,8 +109,11 @@ class SessionRunner:
         sps, slots = self.e.sps_estimate(), self.e.total_slots
 
         self.set_phase("plan", "choosing configs and pre-registering predictions")
+        max_cfg = self.e.cfg["rl"].get("max_configs", 3)
         self.plan, actor = await asyncio.to_thread(plan_rl, self.e.llm, self.id, b,
-                                                   {"slots": slots, "sps_per_run": round(sps), "minutes": minutes})
+                                                   {"slots": slots, "sps_per_run": round(sps), "minutes": minutes}, max_cfg)
+        from control.planner import trim_plan
+        self.plan, trim_note = trim_plan(self.plan, max_cfg)
         self.budget = size_budget(len(self.plan.configs), len(envs), minutes, sps, slots, self.e.cfg["rl"])
         self.budget["envs"] = envs
         with self.e.db_lock:
@@ -112,12 +125,18 @@ class SessionRunner:
             self.e.db.commit()
         self.e.decision(self.id, actor, None, "plan", f"{len(self.plan.configs)} configs, "
                         f"{len(self.plan.predictions)} predictions; budget {self.budget}", self.plan.model_dump())
+        if trim_note:
+            self.budget["notes"].append(trim_note)
         for note in self.budget["notes"]:
             self.e.decision(self.id, "code", None, "trim", note)
         self.e._publish(self.id, {"type": "plan", "plan": self.plan.model_dump(), "budget": self.budget})
 
         B1, B2, seeds = self.budget["b1"], self.budget["b2"], self.budget["seeds"]
         cfgs = {c.name: c.resolved_params() for c in self.plan.configs}
+
+        if self.vm_task is not None:
+            self.set_phase("provision", "waiting for the gVisor worker VM")
+            await self.vm_task
 
         # ---------------- wave 1, segment 1
         self.set_phase("wave1", f"screening {len(cfgs)} configs on {primary}, {B1:,} steps each")

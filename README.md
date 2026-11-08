@@ -31,7 +31,19 @@ live learning curves per wave and env, the run table, the agent's decisions and 
   ignored if Vultr doesn't serve it, then `control/config.yaml` picks), `NODE_TOKEN` (shared secret for node agents).
 - Tests: `.venv/bin/python -m pytest -q tests`
 
-## Run it on Vultr (sandboxed)
+## Run it on Vultr (sandboxed, default)
+
+`control/config.yaml` → `worker.mode: vultr`, `lifecycle: shared`: the app keeps **one Vultr VM**
+(`vhp-8c-16gb-amd`, `lax`, ~$0.13/h) running Docker + gVisor and reuses it for every session. At startup it reconnects
+to the VM recorded in `runs/worker_shared.json` (local, git-ignored; holds the node token) or creates one. The VM is
+destroyed automatically at `keep_until` (default `18:00` local time). `.env` needs `VULTR_API_KEY` (account key) for
+this, and `VULTR_INFERENCE_API_KEY` for the LLM. Use `WORKER_MODE=local scripts/dev.sh` for the unsandboxed dev backend.
+
+Each VM runs 3 sandboxes in parallel (2 vCPU / 3 GB each, measured ~950 env steps/sec per PPO run under gVisor).
+The VM's firewall group only admits this machine's public IP on ports 22 and 8100, and the node agent requires a
+per-VM bearer token delivered through instance user-data.
+
+Manual setup of a worker (what the provisioner/scripts do):
 
 Worker VM (Ubuntu 24.04, e.g. 32 vCPU):
 
@@ -68,9 +80,11 @@ tests/       contract tests
 |---|---|
 | PPO worker (train / resume / fork / STOP / checkpoints / held-out eval) | working, tested locally |
 | Node agent, local backend | working |
-| Node agent, Docker + gVisor backend | written, **not yet run on a Linux worker** |
+| Node agent, Docker + gVisor backend | working on Vultr; 3 parallel sandboxes; red-team egress / write-escape contained |
+| Shared Vultr worker VM (auto-create, reconnect, auto-destroy at 18:00) | working |
 | Agent loop for RL: brief → plan → wave 1 halving + rescue → wave 2 + monitor (stop/fork, guardrails) → verify → report | working end to end |
-| LLM steps on Vultr Serverless Inference | wired with fallbacks; needs a valid Serverless Inference key |
+| LLM steps on Vultr Serverless Inference (`mimo-v2.6-pro`) | working, with rule-based fallbacks |
 | Web UI: live SSE curves, runs, decisions, flags, containment panel, report | working |
 | Tabular adapter + churn demo (ingest, profile, sealed test set) | not built yet |
-| Worker Dockerfile, Caddy, replay mode | not built yet |
+| Worker Dockerfile | working |
+| Caddy public URL, replay mode | not built yet |

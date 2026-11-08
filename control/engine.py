@@ -35,7 +35,8 @@ class Engine:
         self.db = dbmod.connect(cfg["db_path"])
         self.db_lock = threading.Lock()
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.nodes = make_nodes(cfg)
+        self.worker_mode = cfg.get("worker", {}).get("mode", "local")
+        self.nodes = make_nodes(cfg) if self.worker_mode == "local" else []
         self.llm = LLM(cfg["llm"], self.log_event)
         self.runs: dict[str, RunState] = {}
         self.queue: list[str] = []
@@ -53,21 +54,37 @@ class Engine:
         for n in self.nodes:
             await n.health()
         await asyncio.to_thread(self.llm.probe)
+        from control.provision import Provisioner
+        self.provisioner = Provisioner(self)
+        await self.provisioner.start()
         self._tasks = [asyncio.create_task(self._dispatch_loop()), asyncio.create_task(self._poll_loop()),
                        asyncio.create_task(self._health_loop())]
 
+    def add_node(self, node):
+        self.nodes.append(node)
+        self.on_node[node.name] = 0
+
+    def remove_node(self, node):
+        self.nodes = [n for n in self.nodes if n is not node]
+
     @property
     def total_slots(self) -> int:
+        if self.worker_mode == "vultr":
+            return int(self.cfg["worker"].get("slots", 3))
         return sum(n.slots for n in self.nodes if n.healthy) or 1
 
     @property
     def sandboxed(self) -> bool:
+        if self.worker_mode == "vultr":
+            return True   # every job runs on a per-session gVisor VM
         return bool(self.nodes) and all(n.sandboxed for n in self.nodes if n.healthy)
 
     def sps_estimate(self) -> float:
         if len(self.observed_sps) >= 5:
             xs = sorted(self.observed_sps[-50:])
             return xs[len(xs) // 2]
+        if self.worker_mode == "vultr":
+            return float(self.cfg["worker"].get("sps_estimate", 950))
         return float(self.cfg["rl"]["sps_estimate"])
 
     # ------------------------------------------------------------ events / decisions (thread-safe)
@@ -195,11 +212,17 @@ class Engine:
     def node_of(self, rs: RunState):
         return next(n for n in self.nodes if n.name == rs.node)
 
+    def node_or_none(self, rs: RunState):
+        return next((n for n in self.nodes if n.name == rs.node), None)
+
     async def _poll_loop(self):
         while True:
             await asyncio.sleep(2)
             running = [r for r in self.runs.values() if r.status == "RUNNING"]
             for rs in running:
+                if self.node_or_none(rs) is None:   # its VM is gone
+                    self._finish(rs, "FAILED", "worker VM went away")
+                    continue
                 try:
                     await self._poll_one(rs)
                 except Exception as e:  # a flaky node must not kill the poller

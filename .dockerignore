@@ -1,0 +1,6 @@
+.venv
+runs
+.git
+**/__pycache__
+.env
+docs

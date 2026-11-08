@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const PALETTE = ["#4e79a7", "#e15759", "#59a14f", "#f28e2b", "#b07aa1", "#76b7b2", "#edc948", "#9c755f"];
-  const PHASES = ["understand", "plan", "wave1", "wave1-seg2", "wave2", "verify", "report"];
+  const PHASES = ["understand", "plan", "provision", "wave1", "wave1-seg2", "wave2", "verify", "report"];
   const S = { runs: {}, charts: {}, cfgColor: {}, decisions: [], created: null, status: "", sandboxed: false };
 
   const color = (cfg) => {
@@ -135,6 +135,10 @@
       $("contain").prepend(li);
     }
     if (ev.kind === "error") setPhase("failed", ev.payload.error);
+    if (ev.kind === "worker") {
+      $("worker").classList.remove("hidden");
+      $("worker").innerHTML = `<b>Worker VM</b> <span class="mono">${new Date(ev.ts * 1000).toLocaleTimeString()}</span> ${esc(ev.payload.msg)}${ev.payload.ip ? ` <span class="mono">${esc(ev.payload.ip)}</span>` : ""}`;
+    }
   }
 
   function setPhase(phase, detail) {

@@ -16,5 +16,7 @@ def settings() -> dict:
     s = yaml.safe_load((ROOT / "control" / "config.yaml").read_text())
     if os.environ.get("NODE_URL"):
         s["nodes"][0]["url"] = os.environ["NODE_URL"]
+    if os.environ.get("WORKER_MODE"):
+        s.setdefault("worker", {})["mode"] = os.environ["WORKER_MODE"]
     s["db_path"] = os.environ.get("DB_PATH", str(ROOT / "runs" / "autoresearch.db"))
     return s

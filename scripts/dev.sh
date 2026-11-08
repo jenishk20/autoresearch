@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 [ -x "$PY" ] || { echo "Create the venv first: see README (uv venv --python 3.11 .venv && uv pip install ...)"; exit 1; }
 mkdir -p runs
-SLOTS="${NODE_SLOTS:-5}"
+SLOTS="${NODE_SLOTS:-3}"
 echo "starting node agent on :8100 (local backend, $SLOTS slots)"
 NODE_BACKEND=local NODE_SLOTS="$SLOTS" $PY -m uvicorn node_agent.app:app --host 127.0.0.1 --port 8100 --log-level warning > runs/node_agent.log 2>&1 &
 NODE_PID=$!

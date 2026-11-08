@@ -34,6 +34,9 @@ IMAGE = os.environ.get("WORKER_IMAGE", "autoresearch-worker:latest")
 RUNTIME = os.environ.get("DOCKER_RUNTIME", "runsc")
 STOP_GRACE_S = 15
 
+if BACKEND == "docker" and not TOKEN:
+    raise SystemExit("NODE_TOKEN is required with the docker backend (the agent listens on a public IP)")
+
 app = FastAPI(title="autoresearch node agent")
 
 
